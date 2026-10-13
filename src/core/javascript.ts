@@ -280,11 +280,36 @@ function enclosingClass(b: Block | undefined): Block | undefined {
   return b;
 }
 
+/** Record a function passed as a value: `on('click', handler)`, `{ onSave: this.save }`, `onClick={go}`. */
+function ref(n: Node | null, blk: Block, b: GraphBuilder) {
+  if (!n) return;
+  const line = lineOf(n);
+  if (n.type === 'identifier' || n.type === 'shorthand_property_identifier') {
+    if (n.text !== 'undefined') b.call(blk, { kind: 'name', name: n.text, line, ref: true });
+  } else if (n.type === 'member_expression') {
+    const obj = n.childForFieldName('object');
+    const name = n.childForFieldName('property')?.text ?? '';
+    if (obj?.type === 'this') b.call(blk, { kind: 'self', name, line, ref: true });
+    else if (obj && /^[\w$.]+$/.test(obj.text)) b.call(blk, { kind: 'member', name, obj: obj.text, line, ref: true });
+  }
+}
+
 const calls: CallVisitor = {
-  types: new Set(['call_expression', 'new_expression', 'variable_declarator', 'assignment_expression']),
+  types: new Set(['call_expression', 'new_expression', 'variable_declarator', 'assignment_expression', 'pair', 'shorthand_property_identifier', 'array', 'jsx_expression']),
   visit(node, blk, b) {
     const t = node.type;
     const line = lineOf(node);
+    if (t === 'pair') return ref(node.childForFieldName('value'), blk, b);
+    if (t === 'shorthand_property_identifier') return ref(node, blk, b);
+    if (t === 'jsx_expression') return ref(node.namedChild(0), blk, b);
+    if (t === 'array') {
+      for (const c of node.namedChildren) ref(c, blk, b);
+      return;
+    }
+    if (t === 'call_expression' || t === 'new_expression') {
+      const args = node.childForFieldName('arguments');
+      if (args?.type === 'arguments') for (const a of args.namedChildren) ref(a, blk, b);
+    }
     if (t === 'variable_declarator' || t === 'assignment_expression') {
       const left = node.childForFieldName(t === 'variable_declarator' ? 'name' : 'left');
       let right = node.childForFieldName(t === 'variable_declarator' ? 'value' : 'right');
@@ -310,6 +335,8 @@ const calls: CallVisitor = {
       const obj = fn.childForFieldName('object');
       const name = fn.childForFieldName('property')?.text ?? '';
       if (!obj) return;
+      // `this.onClick.bind(this)` hands the method over rather than calling bind on something unknown.
+      if (name === 'bind' && obj.type === 'member_expression') return ref(obj, blk, b);
       if (obj.type === 'this') b.call(blk, { kind: 'self', name, line });
       else if (obj.type === 'super') b.call(blk, { kind: 'super', name, line });
       else if (obj.type === 'new_expression' && /^[\w$.]+$/.test(obj.childForFieldName('constructor')?.text ?? '')) {

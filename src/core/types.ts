@@ -1,7 +1,14 @@
 // Language-neutral graph model. Everything after parsing works on these shapes,
 // so the resolver and the webview never care which language a file came from.
 
+/** Languages with a bundled tree-sitter parser. */
 export type Lang = 'python' | 'java' | 'javascript';
+
+/**
+ * Where a file's blocks came from: Codebloom's own parsers, or the document
+ * symbols of whatever language extension VS Code has for that language.
+ */
+export type Engine = 'parser' | 'symbols';
 
 export type BlockKind =
   | 'doc'
@@ -15,7 +22,9 @@ export type BlockKind =
   | 'method'
   | 'ctor'
   | 'main'
-  | 'script';
+  | 'script'
+  | 'namespace'
+  | 'section';
 
 export interface CallSite {
   /** name: foo()   self: self.foo()/this.foo()   super: super().foo()   member: x.foo()   new: new Foo() */
@@ -26,6 +35,12 @@ export interface CallSite {
   line: number;
   /** Argument count, used to pick between Java overloads. */
   argc?: number;
+  /**
+   * The function is passed as a value rather than called: `add_node("x", fn)`,
+   * `addEventListener("click", this.onClick)`, `{ handler }`. These link as
+   * "referenced by" so callbacks don't look unused.
+   */
+  ref?: boolean;
 }
 
 export interface Block {
@@ -39,7 +54,13 @@ export interface Block {
   end: number;
   /** Line of the declaration itself (after decorators/comments). */
   defLine: number;
+  /** Column of the name on defLine (symbol-based files, for asking the language server about it). */
+  defCol?: number;
   signature?: string;
+  /** Label shown on the block's chip when the kind alone is too vague: "struct", "trait", "h2". */
+  tag?: string;
+  /** Decorators or annotations, e.g. "@app.route('/')". A hint that a framework calls the block. */
+  decorators?: string[];
   /** Java: [min, max] parameter count, for overload matching. */
   arity?: [number, number];
   /** Short summary for group blocks: imported modules, assigned names, etc. */
@@ -69,7 +90,9 @@ export interface ImportBinding {
 
 export interface FileGraph {
   rel: string;
-  lang: Lang;
+  /** A bundled parser language, or the VS Code language id for symbol-based files. */
+  lang: string;
+  engine?: Engine;
   lineCount: number;
   blocks: Block[];
   imports: ImportBinding[];
@@ -90,7 +113,7 @@ export function* walk(blocks: Block[]): Generator<Block> {
 }
 
 export function isContainer(b: Block): boolean {
-  return b.kind === 'class' || b.kind === 'interface' || b.kind === 'enum';
+  return b.kind === 'class' || b.kind === 'interface' || b.kind === 'enum' || b.kind === 'namespace';
 }
 
 export function isCallable(b: Block): boolean {

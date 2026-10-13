@@ -18,6 +18,13 @@ function declaratorNames(n: Node): string[] {
   return n.childrenForFieldName('declarator').map((d) => d?.childForFieldName('name')?.text ?? '');
 }
 
+/** Annotations on a declaration, e.g. "@GetMapping(\"/x\")". */
+function annotations(n: Node): string[] | undefined {
+  const mods = n.namedChildren.find((c) => c?.type === 'modifiers');
+  const out = (mods?.namedChildren ?? []).filter((c) => c?.type === 'marker_annotation' || c?.type === 'annotation').map((c) => oneLine(c!.text, 60));
+  return out.length ? out : undefined;
+}
+
 function javadocSummary(comment: Node | null): string | undefined {
   if (!comment || comment.type !== 'block_comment' || !comment.text.startsWith('/**')) return;
   const body = comment.text
@@ -38,6 +45,7 @@ class JavaExtractor {
     const nameNode = node.childForFieldName('name') ?? node;
     const blk = this.b.make(kind, name, parent, [node], nameNode, start);
     blk.detail = javadocSummary(node.previousNamedSibling);
+    blk.decorators = annotations(node);
     const bases: string[] = [];
     const sup = node.childForFieldName('superclass');
     if (sup?.namedChild(0)) bases.push(stripGenerics(sup.namedChild(0)!.text));
@@ -81,6 +89,7 @@ class JavaExtractor {
         const ret = node.childForFieldName('type')?.text;
         blk.signature = oneLine((params?.text ?? '()') + (ret ? ` → ${ret}` : ''), 140);
         blk.detail = javadocSummary(node.previousNamedSibling);
+        blk.decorators = annotations(node);
         const ps = (params?.namedChildren ?? []).filter((p) => p?.type === 'formal_parameter' || p?.type === 'spread_parameter');
         const varargs = ps.some((p) => p?.type === 'spread_parameter');
         blk.arity = [varargs ? ps.length - 1 : ps.length, varargs ? Infinity : ps.length];

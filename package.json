@@ -1,8 +1,8 @@
 {
   "name": "codebloom",
   "displayName": "Codebloom — Code Mind Maps",
-  "description": "See any Python, Java or JavaScript file as a pastel mind map of its classes and functions, with real code on every branch and call arrows between them.",
-  "version": "0.1.0",
+  "description": "See any file as a pastel mind map of its classes and functions, with real code on every branch and call arrows between them. Python, Java and JavaScript built in; TypeScript, Go, Rust, C# and more through your language extensions.",
+  "version": "0.2.0",
   "publisher": "rohan-patnaik",
   "author": {
     "name": "Rohan Patnaik",
@@ -38,11 +38,15 @@
     "python",
     "java",
     "javascript",
+    "typescript",
+    "go",
+    "rust",
     "visualization",
     "navigation"
   ],
   "main": "./dist/extension.js",
   "activationEvents": [
+    "onStartupFinished",
     "onWebviewPanel:codebloom.map"
   ],
   "contributes": {
@@ -67,27 +71,37 @@
         "command": "codebloom.reindex",
         "title": "Re-index Workspace",
         "category": "Codebloom"
+      },
+      {
+        "command": "codebloom.chooseLanguages",
+        "title": "Choose Languages…",
+        "category": "Codebloom"
+      },
+      {
+        "command": "codebloom.toggleMaximize",
+        "title": "Toggle Full-Width Map",
+        "category": "Codebloom"
       }
     ],
     "menus": {
       "editor/title": [
         {
           "command": "codebloom.openMap",
-          "when": "resourceExtname =~ /^\\.(py|java|js|mjs|cjs|jsx)$/",
+          "when": "resourceLangId in codebloom.languages",
           "group": "navigation@90"
         }
       ],
       "explorer/context": [
         {
           "command": "codebloom.openMapForFile",
-          "when": "resourceExtname =~ /^\\.(py|java|js|mjs|cjs|jsx)$/",
+          "when": "resourceLangId in codebloom.languages",
           "group": "navigation@90"
         }
       ],
       "editor/context": [
         {
           "command": "codebloom.copyBlockContext",
-          "when": "resourceExtname =~ /^\\.(py|java|js|mjs|cjs|jsx)$/",
+          "when": "resourceLangId in codebloom.languages",
           "group": "9_cutcopypaste@90"
         }
       ],
@@ -103,12 +117,50 @@
         "command": "codebloom.openMap",
         "key": "ctrl+alt+m",
         "mac": "cmd+alt+m",
-        "when": "editorTextFocus && resourceExtname =~ /^\\.(py|java|js|mjs|cjs|jsx)$/"
+        "when": "editorTextFocus && resourceLangId in codebloom.languages"
       }
     ],
     "configuration": {
       "title": "Codebloom",
       "properties": {
+        "codebloom.languages": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "python",
+            "java",
+            "javascript",
+            "javascriptreact",
+            "typescript",
+            "typescriptreact",
+            "css",
+            "scss",
+            "less",
+            "html",
+            "markdown"
+          ],
+          "markdownDescription": "Language ids Codebloom maps. Python, Java and JavaScript use the built-in parsers. Every other language is mapped from the outline its language extension provides, so it adds nothing to Codebloom's size. Run **Codebloom: Choose Languages…** to pick from a list."
+        },
+        "codebloom.preferLanguageServer": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Map Python, Java and JavaScript from their language extensions (Pylance, the Java language server, TypeScript) instead of the built-in parsers. Call links can be more accurate, but maps open more slowly and cross-file links come one block at a time."
+        },
+        "codebloom.openLocation": {
+          "type": "string",
+          "enum": [
+            "beside",
+            "tab"
+          ],
+          "default": "beside",
+          "enumDescriptions": [
+            "Open the map in a split beside your code.",
+            "Open the map as a full-width tab in the current editor group. Clicking a block no longer jumps the editor; use Go to code or Enter."
+          ],
+          "description": "Where the mind map opens."
+        },
         "codebloom.followActiveEditor": {
           "type": "boolean",
           "default": true,

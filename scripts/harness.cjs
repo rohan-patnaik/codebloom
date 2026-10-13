@@ -17,7 +17,7 @@ const { Parsers, Project, langOf } = require('../dist-test/core.js');
 <body class="${light ? 'vscode-light' : 'vscode-dark'}"><div id="app"></div>
 <script>
 window.__log=[];
-function acquireVsCodeApi(){return{postMessage(m){window.__log.push(m); if(m.type==='ready') setTimeout(()=>window.postMessage(${JSON.stringify({ type: 'model', model, uri: 'file:///' + rel, text, config: { mode: 'names', maxCardLines: 24 } }).replace(/<\//g, '<\\/')},'*'),0);},getState(){return null},setState(){}}}
+function acquireVsCodeApi(){return{postMessage(m){window.__log.push(m); if(m.type==='ready') setTimeout(()=>window.postMessage(${JSON.stringify({ type: 'model', model, uri: 'file:///' + rel, text, language: { id: model.lang, name: { python: 'Python', java: 'Java', javascript: 'JavaScript' }[model.lang] ?? model.lang, builtIn: true }, config: { mode: 'names', maxCardLines: 24, indexWorkspace: true } }).replace(/<\//g, '<\\/')},'*'),0);},getState(){return null},setState(){}}}
 </script>
 <script src="../dist/webview.js"></script></body></html>`;
   fs.mkdirSync(path.join(__dirname, '..', 'harness'), { recursive: true });

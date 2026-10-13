@@ -61,6 +61,58 @@ exports.run = async function () {
     const text = await vscode.env.clipboard.readText();
     assert.ok(text.includes(':: run') && text.includes('Calls:'), text);
   });
+  await check('typescript maps from the built-in language server', async () => {
+    const ts = await vscode.workspace.openTextDocument(vscode.Uri.joinPath(root, 'ts/shop.ts'));
+    await vscode.window.showTextDocument(ts, vscode.ViewColumn.One);
+    await until(() => api.service.outlineOf('ts/shop.ts') === 'ok', 30000);
+    const v = api.service.project.view('ts/shop.ts');
+    assert.strictEqual(v.engine, 'symbols');
+    const names = v.blocks.map((b) => b.kind + ':' + b.name);
+    assert.ok(names.includes('imports:imports') && names.includes('class:Cart') && names.includes('function:checkout'), names.join(','));
+    const cart = v.blocks.find((b) => b.name === 'Cart');
+    assert.ok(cart.children.some((c) => c.kind === 'method' && c.name === 'add'), JSON.stringify(cart.children.map((c) => c.name)));
+  });
+  await check('typescript calls come from the call hierarchy', async () => {
+    const v = api.service.project.view('ts/shop.ts');
+    const checkout = v.blocks.find((b) => b.name === 'checkout');
+    const info = await until(async () => {
+      const i = await api.service.callsFor('ts/shop.ts', checkout.id);
+      return i.status === 'ok' && i.out.length ? i : undefined;
+    }, 20000);
+    const outs = info.out.map((r) => r.label);
+    assert.ok(outs.includes('add') && outs.includes('total'), outs.join(','));
+    const add = v.blocks.find((b) => b.name === 'Cart').children.find((c) => c.name === 'add');
+    assert.ok(info.out.some((r) => r.id === add.id), 'targets in the same file point at map blocks');
+    const log = v.blocks.find((b) => b.name === 'log');
+    const callers = await api.service.callsFor('ts/shop.ts', log.id);
+    assert.ok(callers.in.some((r) => r.label === 'add'), JSON.stringify(callers.in));
+  });
+  for (const [rel, lang] of [['go/main.go', 'go'], ['rust/lib.rs', 'rust']]) {
+    await check(`${lang} without a language extension falls back to one block`, async () => {
+      await vscode.workspace.getConfiguration('codebloom').update('languages', [...vscode.workspace.getConfiguration('codebloom').get('languages'), lang], vscode.ConfigurationTarget.Global);
+      const d = await vscode.workspace.openTextDocument(vscode.Uri.joinPath(root, rel));
+      await vscode.window.showTextDocument(d, vscode.ViewColumn.One);
+      await until(() => api.service.outlineOf(rel) === 'waiting' || api.service.outlineOf(rel) === 'none', 10000);
+      await until(() => api.service.outlineOf(rel) === 'none', 30000);
+      const v = api.service.project.view(rel);
+      assert.deepStrictEqual(v.blocks.map((b) => b.kind), ['script']);
+      assert.strictEqual(v.blocks[0].end, d.lineCount);
+    });
+  }
+  await check('languages can be switched on', async () => {
+    const rb = await vscode.workspace.openTextDocument(vscode.Uri.joinPath(root, 'ruby/app.rb'));
+    assert.strictEqual(api.service.isSupported(rb), false, 'ruby is off by default');
+    const cfg = vscode.workspace.getConfiguration('codebloom');
+    await cfg.update('languages', [...cfg.get('languages'), 'ruby'], vscode.ConfigurationTarget.Global);
+    assert.strictEqual(api.service.isSupported(rb), true);
+    await cfg.update('languages', undefined, vscode.ConfigurationTarget.Global);
+    assert.strictEqual(api.service.isSupported(rb), false);
+    // Turning a parser language off drops its files from the index.
+    await cfg.update('languages', ['python'], vscode.ConfigurationTarget.Global);
+    await until(() => !api.service.project.indexing && api.service.project.fileCount > 0 && !api.service.project.has('js/app.js'), 20000);
+    assert.ok(api.service.project.has('py/main.py'));
+    await cfg.update('languages', undefined, vscode.ConfigurationTarget.Global);
+  });
   console.log('\n' + results.join('\n') + '\n');
   if (results.some((r) => r.startsWith('FAIL'))) throw new Error('integration failures');
 };

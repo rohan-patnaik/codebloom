@@ -20,46 +20,76 @@ export function langOf(file: string): Lang | undefined {
   return EXT[path.extname(file).toLowerCase()];
 }
 
+/** File extensions handled by one bundled parser language. */
+export const extensionsOf = (lang: Lang) => SUPPORTED_EXTENSIONS.filter((e) => EXT[e] === lang);
+
+const GRAMMARS: Record<Lang, string> = {
+  python: 'tree-sitter-python.wasm',
+  java: 'tree-sitter-java.wasm',
+  javascript: 'tree-sitter-javascript.wasm',
+};
+
 const countLines = (s: string) => {
   let n = 1;
   for (let i = s.indexOf('\n'); i !== -1; i = s.indexOf('\n', i + 1)) n++;
   return s.endsWith('\n') ? n - 1 : n;
 };
 
-/** One tree-sitter parser per language, loaded from the bundled WASM grammars. */
+/**
+ * One tree-sitter parser per language, loaded from the bundled WASM grammars.
+ * Grammars load on first use, so a Python-only workspace never pays for Java.
+ */
 export class Parsers {
-  private constructor(private parsers: Map<Lang, Parser>) {}
+  private parsers = new Map<Lang, Parser>();
+  private loading = new Map<Lang, Promise<void>>();
 
-  static async create(wasmDir: string): Promise<Parsers> {
+  private constructor(private wasmDir: string) {}
+
+  /** Start the tree-sitter runtime and load `preload` grammars (all of them by default). */
+  static async create(wasmDir: string, preload: Lang[] = ['python', 'java', 'javascript']): Promise<Parsers> {
     await Parser.init({ locateFile: (name: string) => path.join(wasmDir, name) });
-    const langs: [Lang, string][] = [
-      ['python', 'tree-sitter-python.wasm'],
-      ['java', 'tree-sitter-java.wasm'],
-      ['javascript', 'tree-sitter-javascript.wasm'],
-    ];
-    const map = new Map<Lang, Parser>();
-    await Promise.all(
-      langs.map(async ([lang, file]) => {
-        const p = new Parser();
-        p.setLanguage(await Language.load(path.join(wasmDir, file)));
-        map.set(lang, p);
-      }),
-    );
-    return new Parsers(map);
+    const p = new Parsers(wasmDir);
+    await Promise.all(preload.map((l) => p.load(l)));
+    return p;
   }
 
+  load(lang: Lang): Promise<void> {
+    let pending = this.loading.get(lang);
+    if (!pending) {
+      pending = Language.load(path.join(this.wasmDir, GRAMMARS[lang])).then((language) => {
+        const p = new Parser();
+        p.setLanguage(language);
+        this.parsers.set(lang, p);
+      });
+      this.loading.set(lang, pending);
+    }
+    return pending;
+  }
+
+  loaded(lang: Lang) {
+    return this.parsers.has(lang);
+  }
+
+  /** Parse with a grammar that is already loaded. Use `parseAsync` when it may not be. */
   parse(rel: string, text: string, lang = langOf(rel)): FileGraph | undefined {
     if (!lang) return;
-    const parser = this.parsers.get(lang)!;
+    const parser = this.parsers.get(lang);
+    if (!parser) throw new Error(`Codebloom: the ${lang} grammar is not loaded`);
     const tree = parser.parse(text);
     if (!tree) return;
     try {
       const lines = countLines(text);
-      if (lang === 'python') return extractPython(tree, rel, lines);
-      if (lang === 'java') return extractJava(tree, rel, lines);
-      return extractJavaScript(tree, rel, lines);
+      const graph = lang === 'python' ? extractPython(tree, rel, lines) : lang === 'java' ? extractJava(tree, rel, lines) : extractJavaScript(tree, rel, lines);
+      graph.engine = 'parser';
+      return graph;
     } finally {
       tree.delete();
     }
+  }
+
+  async parseAsync(rel: string, text: string, lang = langOf(rel)): Promise<FileGraph | undefined> {
+    if (!lang) return;
+    await this.load(lang);
+    return this.parse(rel, text, lang);
   }
 }

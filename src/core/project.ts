@@ -27,6 +27,8 @@ export interface Ref {
   kind: string;
   /** Line of the call site, in the calling file. */
   at: number;
+  /** Set for language-server results, which may point at files outside the index. */
+  uri?: string;
 }
 
 export interface ViewBlock {
@@ -39,17 +41,28 @@ export interface ViewBlock {
   defLine: number;
   signature?: string;
   detail?: string;
+  tag?: string;
+  decorators?: string[];
   children: ViewBlock[];
+}
+
+export interface ViewLinks {
+  out: Ref[];
+  in: Ref[];
+  ext: string[];
+  /** Blocks that pass this one around as a value (callbacks, handlers, graph nodes). */
+  refs: Ref[];
 }
 
 export interface ViewModel {
   rel: string;
   lang: string;
+  engine: 'parser' | 'symbols';
   lineCount: number;
   summary?: string;
   blocks: ViewBlock[];
-  links: Record<string, { out: Ref[]; in: Ref[]; ext: string[] }>;
-  stats: { files: number; lines: number; links: number; indexing: boolean };
+  links: Record<string, ViewLinks>;
+  stats: { files: number; lines: number; links: number; indexing: boolean; truncated?: number };
 }
 
 const JS_EXTS = ['', '.js', '.mjs', '.cjs', '.jsx', '/index.js', '/index.mjs', '/index.jsx'];
@@ -84,9 +97,12 @@ export class Project {
   private out = new Map<string, Link[]>();
   private in = new Map<string, Link[]>();
   private ext = new Map<string, string[]>();
+  private refIn = new Map<string, Link[]>();
   private nameCache = new Map<string, Target[]>();
   private linkCount = 0;
   indexing = false;
+  /** Set to the file limit when the workspace index stopped early. */
+  truncated?: number;
 
   get fileCount() {
     return this.files.size;
@@ -173,13 +189,19 @@ export class Project {
     this.out.clear();
     this.in.clear();
     this.ext.clear();
+    this.refIn.clear();
     this.linkCount = 0;
     for (const f of this.files.values()) {
       for (const b of walk(f.graph.blocks)) {
         const seen = new Set<string>();
         const outs: Link[] = [];
         const exts: string[] = [];
+        const refSites: CallSite[] = [];
         for (const site of b.calls) {
+          if (site.ref) {
+            refSites.push(site);
+            continue;
+          }
           const targets = pickOverloads(this.resolveSite(f, b, site), site.argc);
           if (!targets.length) {
             const label = site.obj ? `${site.obj}.${site.name}` : site.name;
@@ -193,6 +215,17 @@ export class Project {
             const ins = this.in.get(t.id) ?? [];
             ins.push({ id: b.id, at: site.line });
             this.in.set(t.id, ins);
+          }
+        }
+        // A function passed as a value. Only functions count, and a target
+        // that is also called directly is already listed as a call.
+        for (const site of refSites) {
+          for (const t of this.resolveSite(f, b, site)) {
+            if (!isCallable(t) || t.kind === 'ctor' || t.id === b.id || seen.has(t.id)) continue;
+            seen.add(t.id);
+            const refs = this.refIn.get(t.id) ?? [];
+            refs.push({ id: b.id, at: site.line });
+            this.refIn.set(t.id, refs);
           }
         }
         if (outs.length) {
@@ -503,7 +536,7 @@ export class Project {
 
   linksOf(id: string) {
     this.ensure();
-    return { out: this.out.get(id) ?? [], in: this.in.get(id) ?? [], ext: this.ext.get(id) ?? [] };
+    return { out: this.out.get(id) ?? [], in: this.in.get(id) ?? [], ext: this.ext.get(id) ?? [], refs: this.refIn.get(id) ?? [] };
   }
 
   ref(link: Link): Ref | undefined {
@@ -521,7 +554,7 @@ export class Project {
     const toView = (b: Block): ViewBlock => {
       const l = this.linksOf(b.id);
       const refs = (ls: Link[]) => ls.map((x) => this.ref(x)).filter((x): x is Ref => !!x);
-      if (l.out.length || l.in.length || l.ext.length) links[b.id] = { out: refs(l.out), in: refs(l.in), ext: l.ext };
+      if (l.out.length || l.in.length || l.ext.length || l.refs.length) links[b.id] = { out: refs(l.out), in: refs(l.in), ext: l.ext, refs: refs(l.refs) };
       return {
         id: b.id,
         kind: b.kind,
@@ -532,6 +565,8 @@ export class Project {
         defLine: b.defLine,
         signature: b.signature,
         detail: b.detail,
+        tag: b.tag,
+        decorators: b.decorators,
         children: b.children.map(toView),
       };
     };
@@ -540,11 +575,12 @@ export class Project {
     return {
       rel,
       lang: f.graph.lang,
+      engine: f.graph.engine ?? 'parser',
       lineCount: f.graph.lineCount,
       summary: f.graph.summary,
       blocks: f.graph.blocks.map(toView),
       links,
-      stats: { files: this.files.size, lines, links: this.linkCount, indexing: this.indexing },
+      stats: { files: this.files.size, lines, links: this.linkCount, indexing: this.indexing, truncated: this.truncated },
     };
   }
 }

@@ -1,11 +1,26 @@
 import * as vscode from 'vscode';
+import { BUILT_IN_IDS, enabledLanguages, engineFor, languageName, PARSER_IDS, setLanguageEnabled } from './languages';
 import type { MapService } from './service';
 
 type FromWebview =
   | { type: 'ready' }
-  | { type: 'reveal'; rel: string; line: number; endLine?: number; focus?: boolean }
+  | { type: 'reveal'; rel: string; uri?: string; line: number; endLine?: number; focus?: boolean }
   | { type: 'copyContext'; id?: string }
-  | { type: 'mode'; mode: 'names' | 'code' };
+  | { type: 'mode'; mode: 'names' | 'code' }
+  | { type: 'calls'; id: string }
+  | { type: 'enableLanguage'; languageId: string }
+  | { type: 'findExtension'; languageId: string }
+  | { type: 'openSetting'; key: string }
+  | { type: 'chooseLanguages' }
+  | { type: 'maximize' };
+
+/** Shown above the map when the editor moved to a file the map can't follow. */
+interface Notice {
+  kind: 'disabled' | 'unsupported';
+  file: string;
+  languageId: string;
+  language: string;
+}
 
 const nonce = () => {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -13,6 +28,9 @@ const nonce = () => {
   for (let i = 0; i < 32; i++) s += chars[Math.floor(Math.random() * chars.length)];
   return s;
 };
+
+/** Text-only languages where offering a map makes no sense. */
+const NEVER_MAP = new Set(['plaintext', 'log', 'Log', 'code-text-binary', 'search-result', 'scminput', 'git-commit', 'git-rebase', 'ignore']);
 
 /** The single mind-map webview. It follows the active editor and mirrors its cursor. */
 export class MapPanel implements vscode.Disposable {
@@ -26,15 +44,17 @@ export class MapPanel implements vscode.Disposable {
   private sentText?: string;
   private lastColumn: vscode.ViewColumn = vscode.ViewColumn.One;
   private postTimer?: NodeJS.Timeout;
+  private maximized = false;
 
   static show(ctx: vscode.ExtensionContext, service: MapService, uri: vscode.Uri | undefined) {
     if (MapPanel.current) {
       MapPanel.current.panel.reveal(undefined, true);
     } else {
+      const inTab = vscode.workspace.getConfiguration('codebloom').get<string>('openLocation', 'beside') === 'tab';
       const panel = vscode.window.createWebviewPanel(
         MapPanel.viewType,
         'Codebloom',
-        { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
+        { viewColumn: inTab ? vscode.ViewColumn.Active : vscode.ViewColumn.Beside, preserveFocus: !inTab },
         MapPanel.options(ctx),
       );
       MapPanel.current = new MapPanel(panel, ctx, service);
@@ -71,15 +91,26 @@ export class MapPanel implements vscode.Disposable {
       panel.onDidDispose(() => this.dispose()),
       panel.webview.onDidReceiveMessage((m: FromWebview) => this.onMessage(m)),
       service.onDidChange((rel) => {
+        if (!this.rel) return;
+        // Settings changes clear the index; map the current file again.
+        if (!this.service.project.has(this.rel) && this.uri) {
+          void this.open(this.uri);
+          return;
+        }
         if (!rel || rel === this.rel || this.service.project.indexing === false) this.schedulePost();
       }),
       vscode.window.onDidChangeActiveTextEditor((ed) => {
         if (!ed) return;
         if (ed.viewColumn) this.lastColumn = ed.viewColumn;
         const follow = vscode.workspace.getConfiguration('codebloom').get<boolean>('followActiveEditor', true);
-        if (follow && this.service.isSupported(ed.document.uri) && ed.document.uri.toString() !== this.uri?.toString()) {
-          void this.open(ed.document.uri);
+        if (ed.document.uri.toString() === this.uri?.toString()) {
+          // Back on the mapped file: any "still showing" notice is stale.
+          void this.panel.webview.postMessage({ type: 'notice', notice: null });
+          return;
         }
+        if (!follow) return;
+        if (this.service.isSupported(ed.document)) void this.open(ed.document.uri);
+        else this.notice(ed.document);
       }),
       vscode.window.onDidChangeTextEditorSelection((e) => {
         if (e.textEditor.document.uri.toString() !== this.uri?.toString()) return;
@@ -94,10 +125,33 @@ export class MapPanel implements vscode.Disposable {
     );
   }
 
+  /** Tell the user why the map didn't follow them to this file. */
+  private notice(doc: vscode.TextDocument) {
+    if (!['file', 'untitled', 'vscode-remote', 'vscode-vfs'].includes(doc.uri.scheme) || !this.ready) return;
+    const id = doc.languageId;
+    const notice: Notice = {
+      kind: NEVER_MAP.has(id) || enabledLanguages().has(id) ? 'unsupported' : 'disabled',
+      file: doc.uri.path.split('/').pop() ?? '',
+      languageId: id,
+      language: languageName(id),
+    };
+    void this.panel.webview.postMessage({ type: 'notice', notice });
+  }
+
   async open(uri: vscode.Uri) {
-    if (!this.service.isSupported(uri)) return;
+    let doc: vscode.TextDocument;
+    try {
+      doc = await vscode.workspace.openTextDocument(uri);
+    } catch {
+      return;
+    }
+    if (!this.service.isSupported(doc)) {
+      // The current file's language was just switched off: stop refreshing it.
+      if (uri.toString() === this.uri?.toString()) this.rel = undefined;
+      this.notice(doc);
+      return;
+    }
     this.uri = uri;
-    const doc = await vscode.workspace.openTextDocument(uri);
     this.rel = await this.service.update(doc);
     this.panel.title = `Map · ${uri.path.split('/').pop()}`;
     this.service.ensureIndexed();
@@ -120,15 +174,19 @@ export class MapPanel implements vscode.Disposable {
     const ed = vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === this.uri!.toString());
     const sendText = text !== undefined && text !== this.sentText;
     if (sendText) this.sentText = text;
+    const languageId = doc?.languageId ?? model.lang;
     void this.panel.webview.postMessage({
       type: 'model',
       model,
       uri: this.uri.toString(),
       text: sendText ? text : undefined,
       cursor: ed ? ed.selection.active.line + 1 : undefined,
+      language: { id: languageId, name: languageName(languageId), builtIn: !!PARSER_IDS[languageId] || BUILT_IN_IDS.includes(languageId) },
+      outline: this.service.outlineOf(this.rel),
       config: {
         mode: this.ctx.globalState.get<string>('codebloom.mode') ?? cfg.get<string>('defaultMode', 'names'),
         maxCardLines: cfg.get<number>('maxCardLines', 24),
+        indexWorkspace: cfg.get<boolean>('indexWorkspace', true),
       },
     });
   }
@@ -141,34 +199,78 @@ export class MapPanel implements vscode.Disposable {
         this.post();
         return;
       case 'reveal': {
-        const uri = m.rel === this.rel ? this.uri : this.service.uriOf(m.rel);
+        const uri = m.uri ? vscode.Uri.parse(m.uri) : m.rel === this.rel ? this.uri : this.service.uriOf(m.rel);
         if (!uri) return;
+        const same = uri.toString() === this.uri?.toString();
         const cfg = vscode.workspace.getConfiguration('codebloom');
-        if (!m.focus && !cfg.get<boolean>('revealOnClick', true) && uri === this.uri) return;
-        const start = new vscode.Position(Math.max(0, m.line - 1), 0);
-        const end = m.endLine ? new vscode.Position(m.endLine - 1, 0) : start;
-        const editor = await vscode.window.showTextDocument(uri, {
-          viewColumn: this.lastColumn === this.panel.viewColumn ? vscode.ViewColumn.One : this.lastColumn,
-          preserveFocus: !m.focus,
-          preview: false,
-        });
-        editor.selection = new vscode.Selection(start, start);
-        editor.revealRange(new vscode.Range(start, end), vscode.TextEditorRevealType.InCenterIfOutsideViewport);
-        if (uri !== this.uri) void this.open(uri);
+        if (!m.focus && !cfg.get<boolean>('revealOnClick', true) && same) return;
+        // When the map is a tab in the editor's own group, only an explicit "go to code" may cover it.
+        const sharesGroup = vscode.workspace.getConfiguration('codebloom').get<string>('openLocation', 'beside') === 'tab' && !m.focus;
+        if (!sharesGroup) {
+          const start = new vscode.Position(Math.max(0, m.line - 1), 0);
+          const end = m.endLine ? new vscode.Position(m.endLine - 1, 0) : start;
+          const editor = await vscode.window.showTextDocument(uri, {
+            viewColumn: this.lastColumn === this.panel.viewColumn ? vscode.ViewColumn.One : this.lastColumn,
+            preserveFocus: !m.focus,
+            preview: false,
+          });
+          editor.selection = new vscode.Selection(start, start);
+          editor.revealRange(new vscode.Range(start, end), vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+        }
+        if (!same) void this.open(uri);
         return;
       }
       case 'copyContext': {
         if (!this.rel || !this.uri) return;
         const doc = await vscode.workspace.openTextDocument(this.uri);
         const block = m.id ? this.service.project.block(m.id) : undefined;
-        await vscode.env.clipboard.writeText(this.service.contextFor(this.rel, block, doc.getText()));
+        await vscode.env.clipboard.writeText(await this.service.contextFor(this.rel, block, doc.getText()));
         vscode.window.setStatusBarMessage('$(clippy) Codebloom: copied block as context', 2500);
         return;
       }
       case 'mode':
         await this.ctx.globalState.update('codebloom.mode', m.mode);
         return;
+      case 'calls': {
+        if (!this.rel) return;
+        const rel = this.rel;
+        const info = await this.service.callsFor(rel, m.id);
+        if (rel === this.rel) void this.panel.webview.postMessage({ type: 'calls', id: m.id, ...info });
+        return;
+      }
+      case 'enableLanguage': {
+        // Detach from the current file first, so the settings change doesn't re-map it over the new one.
+        const ed = vscode.window.activeTextEditor;
+        if (ed?.document.languageId === m.languageId) this.rel = undefined;
+        await setLanguageEnabled(m.languageId, true);
+        if (ed && engineFor(ed.document)) await this.open(ed.document.uri);
+        return;
+      }
+      case 'findExtension':
+        await vscode.commands.executeCommand('workbench.extensions.search', `@category:"programming languages" ${languageName(m.languageId)}`);
+        return;
+      case 'openSetting':
+        if (m.key.startsWith('codebloom.')) await vscode.commands.executeCommand('workbench.action.openSettings', m.key);
+        return;
+      case 'chooseLanguages':
+        await vscode.commands.executeCommand('codebloom.chooseLanguages');
+        return;
+      case 'maximize':
+        await this.toggleMaximize();
+        return;
     }
+  }
+
+  /** Give the map the whole editor area, or hand it back. */
+  async toggleMaximize() {
+    this.panel.reveal(undefined, false);
+    const cmds = await vscode.commands.getCommands(true);
+    if (cmds.includes('workbench.action.toggleMaximizeEditorGroup')) {
+      await vscode.commands.executeCommand('workbench.action.toggleMaximizeEditorGroup');
+    } else {
+      await vscode.commands.executeCommand(this.maximized ? 'workbench.action.evenEditorWidths' : 'workbench.action.minimizeOtherEditors');
+    }
+    this.maximized = !this.maximized;
   }
 
   private html() {
