@@ -1,0 +1,188 @@
+{
+  "name": "codebloom",
+  "displayName": "Codebloom — Code Mind Maps",
+  "description": "See any Python, Java or JavaScript file as a pastel mind map of its classes and functions, with real code on every branch and call arrows between them.",
+  "version": "0.1.0",
+  "publisher": "rohanpatnaik",
+  "author": {
+    "name": "Rohan Patnaik",
+    "email": "rohanpatnaik1997@gmail.com"
+  },
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#2a2438",
+    "theme": "dark"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Visualization",
+    "Programming Languages",
+    "Other"
+  ],
+  "keywords": [
+    "mind map",
+    "call graph",
+    "code map",
+    "outline",
+    "python",
+    "java",
+    "javascript",
+    "visualization",
+    "navigation"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onWebviewPanel:codebloom.map"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "codebloom.openMap",
+        "title": "Open Mind Map",
+        "category": "Codebloom",
+        "icon": "$(type-hierarchy-sub)"
+      },
+      {
+        "command": "codebloom.openMapForFile",
+        "title": "Open in Codebloom Mind Map",
+        "category": "Codebloom"
+      },
+      {
+        "command": "codebloom.copyBlockContext",
+        "title": "Copy Block at Cursor as LLM Context",
+        "category": "Codebloom"
+      },
+      {
+        "command": "codebloom.reindex",
+        "title": "Re-index Workspace",
+        "category": "Codebloom"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "codebloom.openMap",
+          "when": "resourceExtname =~ /^\\.(py|java|js|mjs|cjs|jsx)$/",
+          "group": "navigation@90"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "codebloom.openMapForFile",
+          "when": "resourceExtname =~ /^\\.(py|java|js|mjs|cjs|jsx)$/",
+          "group": "navigation@90"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "codebloom.copyBlockContext",
+          "when": "resourceExtname =~ /^\\.(py|java|js|mjs|cjs|jsx)$/",
+          "group": "9_cutcopypaste@90"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "codebloom.openMapForFile",
+          "when": "false"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "codebloom.openMap",
+        "key": "ctrl+alt+m",
+        "mac": "cmd+alt+m",
+        "when": "editorTextFocus && resourceExtname =~ /^\\.(py|java|js|mjs|cjs|jsx)$/"
+      }
+    ],
+    "configuration": {
+      "title": "Codebloom",
+      "properties": {
+        "codebloom.followActiveEditor": {
+          "type": "boolean",
+          "default": true,
+          "description": "Switch the map to whichever supported file you open in the editor."
+        },
+        "codebloom.syncCursor": {
+          "type": "boolean",
+          "default": true,
+          "description": "Highlight the block under the editor cursor in the map."
+        },
+        "codebloom.revealOnClick": {
+          "type": "boolean",
+          "default": true,
+          "description": "Clicking a block scrolls the editor to it."
+        },
+        "codebloom.defaultMode": {
+          "type": "string",
+          "enum": [
+            "names",
+            "code"
+          ],
+          "default": "names",
+          "description": "Show block names only (open the selected one as code), or every block as a code card."
+        },
+        "codebloom.maxCardLines": {
+          "type": "number",
+          "default": 24,
+          "minimum": 4,
+          "maximum": 400,
+          "description": "Longest code shown on a card before it is cut off. The full block is always in the editor and the details panel."
+        },
+        "codebloom.indexWorkspace": {
+          "type": "boolean",
+          "default": true,
+          "description": "Index the workspace in the background so calls and callers link across files."
+        },
+        "codebloom.maxFiles": {
+          "type": "number",
+          "default": 4000,
+          "description": "Upper limit on files indexed for cross-file links."
+        },
+        "codebloom.exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "**/node_modules/**",
+            "**/.git/**",
+            "**/venv/**",
+            "**/.venv/**",
+            "**/__pycache__/**",
+            "**/dist/**",
+            "**/build/**",
+            "**/out/**",
+            "**/target/**",
+            "**/*.min.js"
+          ],
+          "description": "Glob patterns skipped by the workspace index."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "node scripts/build.mjs && node --test test/*.test.cjs",
+    "test:vscode": "node scripts/build.mjs && node test/integration/run.cjs",
+    "package": "node scripts/build.mjs --production && vsce package --no-dependencies",
+    "vscode:prepublish": "node scripts/build.mjs --production"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "@types/vscode": "^1.85.0",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^4.0.0",
+    "esbuild": "^0.28.2",
+    "tree-sitter-java": "^0.23.5",
+    "tree-sitter-javascript": "^0.25.0",
+    "tree-sitter-python": "^0.25.0",
+    "typescript": "^5.9.3",
+    "web-tree-sitter": "^0.25.10"
+  }
+}
