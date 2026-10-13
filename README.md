@@ -20,6 +20,8 @@ Codebloom is inspired by [epy (Extended Python)](https://github.com/phoenix2610/
 - **Fast on big files.** Layout is computed from text metrics, and only the blocks on screen are rendered.
 - **Any language, same size.** Python, Java and JavaScript (including JSX) use bundled parsers with cross-file links. Every other language is mapped from the outline its VS Code language extension already provides, so supporting it adds nothing to Codebloom's download.
 
+**Also for JetBrains IDEs.** IntelliJ IDEA, PyCharm and the other JetBrains IDEs (2024.3+) get the same map through the Codebloom plugin, built on the IDE's own code model. See [intellij/](intellij/README.md).
+
 ## Getting started
 
 1. Open a code file. Python, Java, JavaScript, TypeScript, CSS, HTML and Markdown are on by default; run **Codebloom: Choose Languages…** to add others.

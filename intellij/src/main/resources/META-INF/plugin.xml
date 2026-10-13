@@ -1,0 +1,49 @@
+<idea-plugin>
+    <id>io.github.rohanpatnaik.codebloom</id>
+    <name>Codebloom - Code Mind Maps</name>
+    <vendor email="rohanpatnaik1997@gmail.com" url="https://github.com/rohan-patnaik/codebloom">Rohan Patnaik</vendor>
+
+    <description><![CDATA[
+<p><b>See any file as a pastel mind map of its classes and functions, with the real code on every branch and call arrows between them.</b></p>
+<p>Long files are hard to read top to bottom, especially when much of the code was written with AI help. Codebloom lays a file out around its name so you can see its shape at a glance, open any block's code in place, and follow what it calls and what calls it, across the whole project.</p>
+<ul>
+  <li><b>Built on the IDE's code model.</b> Blocks come from the Structure view and calls from IntelliJ's own resolution, so Java and Kotlin links are exact. Every language your IDE understands works.</li>
+  <li><b>Callers on demand.</b> Select a block to find its callers anywhere in the project, including calls through interfaces and base classes.</li>
+  <li><b>Callbacks are not "unused".</b> Methods passed as values (method references, handlers, registered nodes) are listed as <i>Passed as a value</i>.</li>
+  <li><b>Back and forward</b> while you follow calls from file to file, with a trail of where you've been.</li>
+  <li><b>Copy as context</b> puts a block, its calls and its callers on the clipboard for an AI chat.</li>
+  <li>Follows your editor and caret, matches your theme, runs fully locally with no telemetry.</li>
+</ul>
+<p>Open it from the <b>Codebloom</b> tool window on the right, or <b>Open Codebloom Map</b> in the editor's context menu.</p>
+]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends optional="true" config-file="codebloom-java.xml">com.intellij.modules.java</depends>
+
+    <extensionPoints>
+        <extensionPoint name="languageSupport" interface="io.github.rohanpatnaik.codebloom.LanguageSupport" dynamic="true"/>
+    </extensionPoints>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="Codebloom" anchor="right" secondary="false" icon="/icons/codebloom.svg"
+                    factoryClass="io.github.rohanpatnaik.codebloom.CodebloomToolWindowFactory"/>
+        <!-- Development self-test; does nothing unless -Dcodebloom.selfTest is set. -->
+        <postStartupActivity implementation="io.github.rohanpatnaik.codebloom.SelfTestActivity"/>
+    </extensions>
+
+    <actions>
+        <action id="Codebloom.OpenMap" class="io.github.rohanpatnaik.codebloom.OpenMapAction"
+                text="Open Codebloom Map" description="Show this file as a mind map of its classes and functions"
+                icon="/icons/codebloom.svg">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+            <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt shift M"/>
+            <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="meta alt shift M" replace-all="true"/>
+        </action>
+        <action id="Codebloom.CopyContext" class="io.github.rohanpatnaik.codebloom.CopyContextAction"
+                text="Copy Block as LLM Context"
+                description="Copy the block at the caret with what it calls and what calls it">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>
