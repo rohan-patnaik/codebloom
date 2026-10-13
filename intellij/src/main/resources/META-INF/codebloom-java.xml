@@ -1,0 +1,6 @@
+<!-- Loaded only when the Java plugin is present. -->
+<idea-plugin>
+    <extensions defaultExtensionNs="io.github.rohanpatnaik.codebloom">
+        <languageSupport implementation="io.github.rohanpatnaik.codebloom.JavaSupport"/>
+    </extensions>
+</idea-plugin>

@@ -54,7 +54,7 @@ const S = {
   lay: null as Layout | null,
   byId: new Map<string, ViewBlock>(),
   parentOf: new Map<string, ViewBlock | undefined>(),
-  language: { id: '', name: '', builtIn: true },
+  language: { id: '', name: '', builtIn: true } as Language,
   outline: undefined as 'ok' | 'waiting' | 'none' | undefined,
   indexWorkspace: true,
   notice: null as Notice | null,
@@ -276,12 +276,28 @@ function blockAtLine(line: number): ViewBlock | undefined {
   }
 }
 
+/**
+ * The file's language. `provider` names who answers questions about the code
+ * when it isn't one of Codebloom's own parsers ("IntelliJ"); by default that's
+ * the language's VS Code extension.
+ */
+interface Language {
+  id: string;
+  name: string;
+  builtIn: boolean;
+  provider?: string;
+}
+
+/** "the TypeScript extension", or the host's own name. */
+const provider = () => S.language.provider ?? `the ${S.language.name} extension`;
+const Provider = () => provider().charAt(0).toUpperCase() + provider().slice(1);
+
 interface ModelMsg {
   model: ViewModel;
   uri: string;
   text?: string;
   cursor?: number;
-  language?: { id: string; name: string; builtIn: boolean };
+  language?: Language;
   outline?: 'ok' | 'waiting' | 'none';
   config: { mode: Mode; maxCardLines: number; indexWorkspace: boolean };
 }
@@ -354,10 +370,10 @@ function requestCalls(id: string) {
   vscode.postMessage({ type: 'calls', id });
 }
 
-function onCalls(msg: { id: string; status: 'ok' | 'unavailable'; out: Ref[]; in: Ref[] }) {
+function onCalls(msg: { id: string; status: 'ok' | 'unavailable'; out: Ref[]; in: Ref[]; refs?: Ref[] }) {
   if (!S.model || !S.byId.has(msg.id)) return;
   S.lsp.set(msg.id, msg.status);
-  const l: Links = { out: msg.out, in: msg.in, ext: [], refs: [] };
+  const l: Links = { out: msg.out, in: msg.in, ext: [], refs: msg.refs ?? [] };
   S.lspLinks.set(msg.id, l);
   S.model.links[msg.id] = l;
   if (msg.id !== S.selected) return;
@@ -441,7 +457,8 @@ function renderChrome() {
   $('.crumbs .lang').textContent = S.language.name || m.lang;
   const st = m.stats;
   if (m.engine === 'symbols') {
-    $('.stats').innerHTML = `<span title="Blocks come from the ${esc(S.language.name)} extension's outline. Calls are looked up when you select a block.">outline from ${esc(S.language.name)} extension</span>`;
+    const from = S.language.provider ? `${S.language.provider} code model` : `outline from ${S.language.name} extension`;
+    $('.stats').innerHTML = `<span title="Blocks come from ${esc(provider())}. Callers are looked up when you select a block.">${esc(from)}</span>`;
   } else {
     let s = `${plural(st.files, 'file')} · ${plural(st.lines, 'line')} · ${plural(st.links, 'call link')}`;
     if (st.indexing) s += ' <span class="pulse">indexing…</span>';
@@ -474,7 +491,7 @@ function renderBanner() {
   } else if (n) {
     html = `<span>Still showing <b>${esc(here)}</b>. ${esc(n.file)} (${esc(n.language)}) has no map.</span><button class="b-x" data-act="dismiss" aria-label="Dismiss">×</button>`;
   } else if (S.model?.engine === 'symbols' && S.outline === 'waiting') {
-    html = `<span class="pulse">Waiting for the ${esc(S.language.name)} extension to report this file's outline…</span>`;
+    html = `<span class="pulse">Waiting for ${esc(provider())} to ${S.language.provider ? 'finish indexing' : "report this file's outline"}…</span>`;
   } else if (S.model?.engine === 'symbols' && S.outline === 'none') {
     html = S.language.builtIn
       ? `<span>No outline was found for this file, so it is shown as one block.</span>`
@@ -904,7 +921,7 @@ function noCallersHint(b: ViewBlock, l: Links): string {
     return `It is passed as a value by <b>${esc(first.label)}</b>${l.refs.length > 1 ? ' and others' : ''}, so it is probably called from there: a callback, handler or registered node.`;
   }
   if (b.decorators?.length) return `It has <code>${esc(b.decorators[0])}</code>, so a framework probably calls it.`;
-  if (usesLsp()) return `The ${esc(S.language.name)} extension found no callers. Dynamic calls are not counted.`;
+  if (usesLsp()) return `${esc(Provider())} found no callers. Dynamic calls are not counted.`;
   return 'No call to it was found in the indexed files. It may still be called dynamically, through a base class, or by code outside the workspace.';
 }
 
@@ -934,7 +951,7 @@ function renderDetails() {
         <div class="tile"><b>${fns}</b><span>${fns === 1 ? 'function' : 'functions'}</span></div>
       </div>
       ${hot.length ? `<h4>Most called</h4><ul class="refs">${hot.slice(0, 8).map((h) => `<li><button class="ref sel" data-id="${esc(h.b.id)}"><span class="ref-name">${esc(h.b.qual.replace(/#\d+$/, ''))}</span><span class="ref-where">←${h.n}</span></button></li>`).join('')}</ul>` : ''}
-      ${usesLsp() ? `<p class="d-note">Select a block to ask the ${esc(S.language.name)} extension what it calls and what calls it.</p>` : ''}
+      ${usesLsp() ? `<p class="d-note">Select a block to ask ${esc(provider())} what calls it.</p>` : ''}
       <div class="tips">
         <h4>Tips</h4>
         <ul>
@@ -965,9 +982,9 @@ function renderDetails() {
   let callsHtml: string;
   const status = usesLsp() ? S.lsp.get(b.id) : 'ok';
   if (isGroup(b)) callsHtml = '';
-  else if (status === 'loading') callsHtml = `<p class="none pulse calls-note">Asking the ${esc(S.language.name)} extension for calls…</p>`;
+  else if (status === 'loading' && !links(b.id)) callsHtml = `<p class="none pulse calls-note">Asking ${esc(provider())} for calls…</p>`;
   else if (status === 'unavailable') {
-    callsHtml = `<p class="none calls-note">Call information isn't available for this block. The ${esc(S.language.name)} extension doesn't report a call hierarchy here${S.language.builtIn ? '' : ', or no extension is installed'}.</p>`;
+    callsHtml = `<p class="none calls-note">Call information isn't available for this block. ${esc(Provider())} doesn't report a call hierarchy here${S.language.builtIn ? '' : ', or no extension is installed'}.</p>`;
   } else {
     const hint = noCallersHint(b, l);
     callsHtml = `

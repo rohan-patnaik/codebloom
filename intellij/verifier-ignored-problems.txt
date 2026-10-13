@@ -1,0 +1,6 @@
+# JavaSupport is registered only from codebloom-java.xml, which loads only when the Java plugin is present.
+# IDEs without Java (PyCharm, WebStorm…) never load it, so the Java PSI classes it uses can't be reached there.
+# Only those exact classes are listed, so any other problem still fails verification.
+io.github.rohanpatnaik.codebloom:Access to unresolved class com\.intellij\.psi\.(PsiAnnotation|PsiClass|PsiClassType|PsiDocCommentOwner|PsiJavaCodeReferenceElement|PsiMethod|PsiMethodCallExpression|PsiModifierList|PsiModifierListOwner|PsiNewExpression|PsiParameterList|PsiReferenceExpression|PsiTypeElement|PsiAnonymousClass|PsiField|PsiClassInitializer|PsiMethodReferenceExpression)
+io.github.rohanpatnaik.codebloom:Access to unresolved class com\.intellij\.psi\.search\.searches\.MethodReferencesSearch
+io.github.rohanpatnaik.codebloom:Package 'com\.intellij\.psi\.javadoc' is not found
