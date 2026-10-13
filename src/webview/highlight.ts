@@ -49,12 +49,91 @@ const SPECS: Record<string, LangSpec> = {
   },
 };
 
+const JS_KW = SPECS.javascript.keywords;
+const C_LIKE_KW = words(
+  'abstract as async await break case catch class const continue default defer delete do else enum export extends final finally fn for foreach func function go goto if impl implements import in interface internal is let loop match mod module move mut namespace new override package private protected pub public readonly return select sealed static struct super switch this throw throws trait try type typeof unsafe use using var virtual void where while with yield',
+);
+const C_TYPES = words('int uint int8 int16 int32 int64 uint8 uint16 uint32 uint64 i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 usize isize float double char bool boolean byte short long string str rune any object dynamic auto unsigned signed');
+const HASH_KW = words('alias and begin break case class def defined do elif else elsif end ensure esac export fi for function if in local module next not or redo rescue retry return self super then unless until when while yield require import from');
+const SQL_KW = words('select from where join left right inner outer full on group by order having limit offset insert into values update set delete create table view index drop alter add column primary key foreign references not null and or as distinct union all case when then else end exists in like between is with returning');
+const LITS = words('true false null nil None undefined self this NULL TRUE FALSE');
+
+/** Close-enough specs for languages Codebloom maps through their language extension. */
+function family(lang: string): LangSpec {
+  const cLike = (extra = '', multi: string[] = [], decorator = true): LangSpec => ({
+    line: ['//'],
+    block: ['/*', '*/'],
+    multi,
+    quotes: ['"', "'"],
+    keywords: new Set([...C_LIKE_KW, ...C_TYPES, ...words(extra)]),
+    literals: LITS,
+    decorator,
+    defs: words('class struct interface enum trait fn func function def type record'),
+  });
+  switch (lang) {
+    case 'typescript':
+    case 'typescriptreact':
+      return { ...SPECS.javascript, keywords: new Set([...JS_KW, ...words('abstract as declare enum implements interface keyof namespace private protected public readonly type satisfies infer is asserts override')]), decorator: true, defs: words('function class interface type enum namespace') };
+    case 'go':
+      return cLike('chan fallthrough map range', ['`'], false);
+    case 'css':
+      return { line: [], block: ['/*', '*/'], multi: [], quotes: ['"', "'"], keywords: words('important media import keyframes supports font-face'), literals: new Set(), decorator: false, defs: new Set() };
+    case 'scss':
+    case 'less':
+      return { line: ['//'], block: ['/*', '*/'], multi: [], quotes: ['"', "'"], keywords: words('important media import mixin include extend use forward if else each for function return'), literals: new Set(), decorator: false, defs: new Set() };
+    case 'ruby':
+    case 'shellscript':
+    case 'perl':
+    case 'r':
+    case 'elixir':
+    case 'yaml':
+    case 'toml':
+    case 'powershell':
+    case 'julia':
+    case 'nim':
+    case 'makefile':
+    case 'dockerfile':
+    case 'coffeescript':
+    case 'crystal':
+    case 'tcl':
+      return { line: ['#'], multi: lang === 'elixir' || lang === 'julia' ? ['"""'] : [], quotes: ['"', "'"], keywords: HASH_KW, literals: LITS, decorator: lang === 'elixir', defs: words('def class module function defmodule defp fn') };
+    case 'sql':
+      return { line: ['--'], block: ['/*', '*/'], multi: [], quotes: ["'", '"'], keywords: new Set([...SQL_KW, ...[...SQL_KW].map((w) => w.toUpperCase())]), literals: LITS, decorator: false, defs: new Set() };
+    case 'lua':
+    case 'haskell':
+    case 'elm':
+    case 'ada':
+      return { line: ['--'], block: lang === 'haskell' || lang === 'elm' ? ['{-', '-}'] : undefined, multi: [], quotes: ['"', "'"], keywords: words('and break do else elseif end false for function goto if in local nil not or repeat return then true until while module where import data type class instance let case of deriving newtype'), literals: LITS, decorator: false, defs: words('function data type class') };
+    case 'html':
+    case 'xml':
+    case 'vue':
+    case 'svelte':
+    case 'markdown':
+      return { line: [], block: lang === 'markdown' ? undefined : ['<!--', '-->'], multi: [], quotes: lang === 'markdown' ? [] : ['"'], keywords: new Set(), literals: new Set(), decorator: false, defs: new Set() };
+    case 'rust':
+      return cLike('crate dyn ref self Self', [], false);
+    case 'csharp':
+      return { ...cLike('get set init params out ref base delegate event fixed lock operator sizeof stackalloc checked unchecked'), decorator: false };
+    case 'php':
+      return { ...cLike('echo elseif endif endforeach endwhile array list require require_once include include_once global'), line: ['//', '#'] };
+    default:
+      return cLike('', ['`']);
+  }
+}
+
+const familyCache = new Map<string, LangSpec>();
+const specFor = (lang: string) => {
+  let s = SPECS[lang] ?? familyCache.get(lang);
+  if (!s) familyCache.set(lang, (s = family(lang)));
+  return s;
+};
+
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const span = (cls: string, s: string) => `<span class="t-${cls}">${esc(s)}</span>`;
 
 /** Returns highlighted HTML for each line. */
 export function highlight(lines: string[], lang: string): string[] {
-  const spec = SPECS[lang] ?? SPECS.javascript;
+  const spec = specFor(lang);
   const out: string[] = new Array(lines.length);
   // Carried state: inside a block comment, or inside a multi-line string with this delimiter.
   let inBlock = false;

@@ -7,6 +7,23 @@ const vscode = acquireVsCodeApi();
 
 type Mode = 'names' | 'code';
 type View = 'map' | 'outline';
+type Links = ViewModel['links'][string];
+
+interface Notice {
+  kind: 'disabled' | 'unsupported';
+  file: string;
+  languageId: string;
+  language: string;
+}
+
+/** One stop in the navigation history: a block, possibly in another file. */
+interface Stop {
+  rel: string;
+  uri?: string;
+  id?: string;
+  line: number;
+  label: string;
+}
 
 interface FileView {
   x: number;
@@ -37,7 +54,20 @@ const S = {
   lay: null as Layout | null,
   byId: new Map<string, ViewBlock>(),
   parentOf: new Map<string, ViewBlock | undefined>(),
+  language: { id: '', name: '', builtIn: true },
+  outline: undefined as 'ok' | 'waiting' | 'none' | undefined,
+  indexWorkspace: true,
+  notice: null as Notice | null,
+  /** Language-server call lookups for symbol-based files, by block id. */
+  lsp: new Map<string, 'loading' | 'ok' | 'unavailable'>(),
+  lspLinks: new Map<string, Links>(),
+  /** Details panel opened on a narrow view, where it floats over the map. */
+  narrowOpen: false,
 };
+
+const H = { stops: [] as Stop[], i: -1 };
+/** Block to select once the map switches to another file. */
+let pendingStop: Stop | undefined;
 
 function save() {
   if (S.uri) S.files[S.uri] = { x: S.x, y: S.y, k: S.k, collapsed: [...S.collapsed], selected: S.selected };
@@ -82,6 +112,7 @@ const fileName = (rel: string) => rel.split('/').pop() ?? rel;
 const plural = (n: number, w: string) => `${n.toLocaleString()} ${w}${n === 1 ? '' : 's'}`;
 
 function chip(b: ViewBlock): string {
+  if (b.tag) return b.tag;
   const lang = S.model?.lang;
   switch (b.kind) {
     case 'function':
@@ -97,11 +128,13 @@ function chip(b: ViewBlock): string {
 
 const isGroup = (b: ViewBlock) => ['imports', 'globals', 'fields', 'script', 'doc', 'main'].includes(b.kind);
 const label = (b: ViewBlock) => (isGroup(b) ? b.detail || b.kind : b.name);
-const links = (id: string) => S.model?.links[id];
+const links = (id: string): Links | undefined => S.model?.links[id];
+/** Callers plus blocks that pass this one around as a value. */
+const inCount = (l: Links | undefined) => (l ? l.in.length + (l.refs?.length ?? 0) : 0);
 function badges(b: ViewBlock): string[] {
   const l = links(b.id);
   const out: string[] = [];
-  if (l?.in.length) out.push(`←${l.in.length}`);
+  if (inCount(l)) out.push(`←${inCount(l)}`);
   if (l?.out.length) out.push(`→${uniq(l.out).length}`);
   return out;
 }
@@ -166,6 +199,10 @@ const app = $('#app');
 app.innerHTML = `
 <header class="top">
   <div class="brand"><span class="logo"></span><span class="brand-name">Codebloom</span></div>
+  <div class="nav">
+    <button class="icon-btn back" title="Back (Alt+←)" aria-label="Back" disabled><svg viewBox="0 0 16 16" class="ico"><path d="M10 3.5 5.5 8l4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <button class="icon-btn fwd" title="Forward (Alt+→)" aria-label="Forward" disabled><svg viewBox="0 0 16 16" class="ico"><path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+  </div>
   <div class="crumbs"><span class="dir"></span><span class="file"></span><span class="lang"></span></div>
   <div class="stats"></div>
   <div class="search">
@@ -174,7 +211,8 @@ app.innerHTML = `
     <kbd>/</kbd>
     <div class="results" hidden></div>
   </div>
-  <button class="icon-btn toggle-details" title="Toggle details panel"><svg viewBox="0 0 16 16" class="ico"><rect x="1.5" y="2.5" width="13" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M10 3v10" stroke="currentColor" stroke-width="1.3"/></svg></button>
+  <button class="icon-btn maximize" title="Full-width map" aria-label="Full-width map"><svg viewBox="0 0 16 16" class="ico"><path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5 9 7M2.5 13.5 7 9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+  <button class="icon-btn toggle-details" title="Toggle details panel (D)"><svg viewBox="0 0 16 16" class="ico"><rect x="1.5" y="2.5" width="13" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M10 3v10" stroke="currentColor" stroke-width="1.3"/></svg></button>
 </header>
 <main>
   <section class="stage" tabindex="0" aria-label="Mind map">
@@ -187,7 +225,9 @@ app.innerHTML = `
       <div class="nodes"></div>
     </div>
     <div class="empty" hidden></div>
-    <div class="legend"><span class="lg-out">calls</span><span class="lg-in">called by</span></div>
+    <div class="trail" hidden></div>
+    <div class="banner" hidden></div>
+    <div class="legend"><span class="lg-out">calls</span><span class="lg-in">called by</span><span class="lg-ref" hidden>passed as a value</span></div>
   </section>
   <section class="outline" hidden></section>
   <aside class="details"></aside>
@@ -236,9 +276,25 @@ function blockAtLine(line: number): ViewBlock | undefined {
   }
 }
 
-function onModel(msg: { model: ViewModel; uri: string; text?: string; cursor?: number; config: { mode: Mode; maxCardLines: number } }) {
+interface ModelMsg {
+  model: ViewModel;
+  uri: string;
+  text?: string;
+  cursor?: number;
+  language?: { id: string; name: string; builtIn: boolean };
+  outline?: 'ok' | 'waiting' | 'none';
+  config: { mode: Mode; maxCardLines: number; indexWorkspace: boolean };
+}
+
+function onModel(msg: ModelMsg) {
   const switching = msg.uri !== S.uri;
+  if (switching || msg.text !== undefined) {
+    // Language-server links are for one version of one file.
+    S.lsp.clear();
+    S.lspLinks.clear();
+  }
   if (switching) {
+    S.notice = null;
     save();
     S.uri = msg.uri;
     const fv = S.files[msg.uri];
@@ -258,15 +314,116 @@ function onModel(msg: { model: ViewModel; uri: string; text?: string; cursor?: n
   }
   S.mode = msg.config.mode;
   S.maxCardLines = msg.config.maxCardLines;
+  S.indexWorkspace = msg.config.indexWorkspace ?? true;
+  S.language = msg.language ?? { id: msg.model.lang, name: msg.model.lang, builtIn: true };
+  S.outline = msg.outline;
+  for (const [id, l] of S.lspLinks) S.model.links[id] = l;
   S.byId.clear();
   S.parentOf.clear();
   indexBlocks(S.model.blocks);
   // Keep the selection across edits: same id, or the block now at its line.
   if (S.selected && !S.byId.has(S.selected)) S.selected = prevSel ? blockAtLine(prevSel.defLine)?.id : undefined;
   if (switching && !S.files[msg.uri] && msg.cursor && msg.cursor > 1) S.selected = blockAtLine(msg.cursor)?.id;
+  // Arrived here by following a call into this file: select its target.
+  let arrived = false;
+  if (switching && pendingStop && pendingStop.rel === S.model.rel) {
+    const target = (pendingStop.id && S.byId.get(pendingStop.id)) || blockAtLine(pendingStop.line);
+    if (target) {
+      S.selected = target.id;
+      arrived = true;
+    }
+    pendingStop = undefined;
+  }
   renderChrome();
-  relayout(switching && !S.files[msg.uri] ? 'fit' : 'keep');
+  relayout(switching && (!S.files[msg.uri] || arrived) ? 'fit' : 'keep');
+  if (arrived && S.selected) ensureVisible(S.selected);
+  if (S.selected) requestCalls(S.selected);
   if (switching) save();
+}
+
+// ------------------------------------------------------------------ language-server calls
+
+const usesLsp = () => S.model?.engine === 'symbols';
+
+/** Ask the extension for a symbol-based block's calls; they arrive as a 'calls' message. */
+function requestCalls(id: string) {
+  if (!usesLsp() || S.lsp.has(id)) return;
+  const b = S.byId.get(id);
+  if (!b || isGroup(b)) return;
+  S.lsp.set(id, 'loading');
+  vscode.postMessage({ type: 'calls', id });
+}
+
+function onCalls(msg: { id: string; status: 'ok' | 'unavailable'; out: Ref[]; in: Ref[] }) {
+  if (!S.model || !S.byId.has(msg.id)) return;
+  S.lsp.set(msg.id, msg.status);
+  const l: Links = { out: msg.out, in: msg.in, ext: [], refs: [] };
+  S.lspLinks.set(msg.id, l);
+  S.model.links[msg.id] = l;
+  if (msg.id !== S.selected) return;
+  // Badges change the pill width, so lay out again around the selection.
+  const box = S.lay?.boxes.get(msg.id);
+  if (S.view === 'map' && box) relayout(anchorOf(box));
+  else {
+    renderDetails();
+    if (S.view === 'outline') renderOutline();
+  }
+}
+
+// ------------------------------------------------------------------ history
+
+const sameStop = (a: Stop | undefined, b: Stop) => !!a && a.rel === b.rel && (a.id ?? a.line) === (b.id ?? b.line);
+
+function stopOf(b: ViewBlock): Stop {
+  return { rel: S.model!.rel, uri: S.uri, id: b.id, line: b.defLine, label: b.qual.replace(/#\d+$/, '') };
+}
+
+function pushStop(stop: Stop) {
+  if (sameStop(H.stops[H.i], stop)) return;
+  H.stops = H.stops.slice(0, H.i + 1);
+  H.stops.push(stop);
+  if (H.stops.length > 60) H.stops.shift();
+  H.i = H.stops.length - 1;
+  renderTrail();
+}
+
+/** Go to a stop: select it here, or open its file and select it there. */
+function goStop(stop: Stop) {
+  if (stop.rel === S.model?.rel) {
+    const b = (stop.id && S.byId.get(stop.id)) || blockAtLine(stop.line);
+    if (b) select(b.id, { reveal: true, center: true });
+  } else {
+    pendingStop = stop;
+    reveal(stop.rel, stop.line, undefined, false, stop.uri);
+  }
+  renderTrail();
+}
+
+function step(delta: number) {
+  const j = H.i + delta;
+  if (j < 0 || j >= H.stops.length) return;
+  H.i = j;
+  goStop(H.stops[j]);
+}
+
+function renderTrail() {
+  ($('.nav .back') as HTMLButtonElement).disabled = H.i <= 0;
+  ($('.nav .fwd') as HTMLButtonElement).disabled = H.i >= H.stops.length - 1;
+  const trail = $('.trail');
+  const from = Math.max(0, H.i - 3);
+  const shown = H.stops.slice(from, H.i + 1);
+  trail.hidden = shown.length < 2;
+  if (trail.hidden) return;
+  trail.innerHTML =
+    (from > 0 ? '<span class="t-more">…</span>' : '') +
+    shown
+      .map((st, k) => {
+        const idx = from + k;
+        const prev = idx > 0 ? H.stops[idx - 1] : undefined;
+        const file = !prev || prev.rel !== st.rel ? `<span class="t-file">${esc(fileName(st.rel))}</span>` : '';
+        return `${k ? '<span class="t-sep">›</span>' : ''}<button class="t-stop ${idx === H.i ? 'on' : ''}" data-i="${idx}" title="${esc(st.rel)}:${st.line}">${file}${esc(st.label)}</button>`;
+      })
+      .join('');
 }
 
 function hl(): string[] {
@@ -281,18 +438,51 @@ function renderChrome() {
   const parts = m.rel.split('/');
   $('.crumbs .dir').textContent = parts.length > 1 ? parts.slice(0, -1).join(' / ') + ' / ' : '';
   $('.crumbs .file').textContent = parts[parts.length - 1];
-  $('.crumbs .lang').textContent = m.lang === 'javascript' ? 'JS' : m.lang === 'python' ? 'Python' : 'Java';
+  $('.crumbs .lang').textContent = S.language.name || m.lang;
   const st = m.stats;
-  $('.stats').innerHTML = `${plural(st.files, 'file')} · ${plural(st.lines, 'line')} · ${plural(st.links, 'call link')}${st.indexing ? ' <span class="pulse">indexing…</span>' : ''}`;
+  if (m.engine === 'symbols') {
+    $('.stats').innerHTML = `<span title="Blocks come from the ${esc(S.language.name)} extension's outline. Calls are looked up when you select a block.">outline from ${esc(S.language.name)} extension</span>`;
+  } else {
+    let s = `${plural(st.files, 'file')} · ${plural(st.lines, 'line')} · ${plural(st.links, 'call link')}`;
+    if (st.indexing) s += ' <span class="pulse">indexing…</span>';
+    if (st.truncated) s += ` <button class="warn" data-setting="codebloom.maxFiles" title="The workspace has more files than codebloom.maxFiles, so calls into the rest are not linked. Click to raise the limit.">first ${st.truncated.toLocaleString()} files only</button>`;
+    if (!S.indexWorkspace) s += ' <button class="warn" data-setting="codebloom.indexWorkspace" title="Only open files are linked. Click to turn workspace indexing back on.">workspace index off</button>';
+    $('.stats').innerHTML = s;
+  }
+  renderBanner();
   for (const b of document.querySelectorAll<HTMLElement>('.mode button')) b.classList.toggle('on', b.dataset.mode === S.mode);
   for (const b of document.querySelectorAll<HTMLElement>('.view button')) b.classList.toggle('on', b.dataset.view === S.view);
   document.body.classList.toggle('no-details', !S.details);
+  document.body.classList.toggle('narrow-open', S.narrowOpen);
   stage.hidden = S.view !== 'map';
   outlineEl.hidden = S.view !== 'outline';
   for (const b of document.querySelectorAll<HTMLElement>('.dock .zoom-out, .dock .zoom-in, .dock .zoom-pct, .dock .fit')) b.toggleAttribute('disabled', S.view !== 'map');
   const empty = $('.empty');
   empty.hidden = m.blocks.length > 0;
   empty.textContent = 'Nothing to map in this file yet.';
+}
+
+/** One line above the map explaining anything the user would otherwise have to guess. */
+function renderBanner() {
+  const b = $('.banner');
+  const n = S.notice;
+  const here = S.model ? fileName(S.model.rel) : '';
+  let html = '';
+  if (n?.kind === 'disabled') {
+    html = `<span>Still showing <b>${esc(here)}</b>. Codebloom isn't mapping ${esc(n.language)} files.</span>
+      <button class="b-act" data-act="enable" data-lang="${esc(n.languageId)}">Map ${esc(n.language)} files</button><button class="b-x" data-act="dismiss" aria-label="Dismiss">×</button>`;
+  } else if (n) {
+    html = `<span>Still showing <b>${esc(here)}</b>. ${esc(n.file)} (${esc(n.language)}) has no map.</span><button class="b-x" data-act="dismiss" aria-label="Dismiss">×</button>`;
+  } else if (S.model?.engine === 'symbols' && S.outline === 'waiting') {
+    html = `<span class="pulse">Waiting for the ${esc(S.language.name)} extension to report this file's outline…</span>`;
+  } else if (S.model?.engine === 'symbols' && S.outline === 'none') {
+    html = S.language.builtIn
+      ? `<span>No outline was found for this file, so it is shown as one block.</span>`
+      : `<span>No ${esc(S.language.name)} extension reported an outline, so this file is shown as one block.</span>
+        <button class="b-act" data-act="find" data-lang="${esc(S.language.id)}">Find a ${esc(S.language.name)} extension</button>`;
+  }
+  b.hidden = !html;
+  b.innerHTML = html;
 }
 
 // ------------------------------------------------------------------ layout + render
@@ -385,7 +575,7 @@ function nodeHtml(box: Box): string {
   let head = `<span class="chip k-${b.kind}">${esc(chip(b))}</span>`;
   head += isGroup(b) ? `<span class="label dim">${esc(label(b))}</span>` : `<span class="label">${esc(b.name)}</span>`;
   head += `<span class="range">${b.start}–${b.end}</span>`;
-  if (l?.in.length) head += `<span class="badge in" title="Called by ${l.in.length}">←${l.in.length}</span>`;
+  if (inCount(l)) head += `<span class="badge in" title="${inTitle(l!)}">←${inCount(l)}</span>`;
   if (l?.out.length) head += `<span class="badge out" title="Calls ${uniq(l.out).length}">→${uniq(l.out).length}</span>`;
   let html = `<div class="head">${head}</div>`;
   if (box.card && box.rows) html += codeHtml(box.rows, b.end, box.more);
@@ -393,6 +583,14 @@ function nodeHtml(box: Box): string {
     html += `<button class="knob" title="${box.collapsed ? 'Expand' : 'Collapse'} (${box.kidCount})" aria-label="Toggle children">${box.collapsed ? `+${box.kidCount}` : '−'}</button>`;
   }
   return html;
+}
+
+function inTitle(l: Links) {
+  const parts = [];
+  if (l.in.length) parts.push(`called by ${uniq(l.in).length}`);
+  if (l.refs?.length) parts.push(`passed as a value by ${uniq(l.refs).length}`);
+  const t = parts.join(' · ');
+  return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
 function codeHtml(rows: Row[], last: number, more?: number) {
@@ -462,6 +660,7 @@ function paintState() {
   if (l) {
     for (const r of l.out) related.add(r.id);
     for (const r of l.in) related.add(r.id);
+    for (const r of l.refs ?? []) related.add(r.id);
   }
   const focus = !!S.selected;
   stage.classList.toggle('focus', focus);
@@ -506,6 +705,7 @@ function arrowPath(a: Box, b: Box): string {
 
 function drawArrows() {
   arrowG.innerHTML = '';
+  $('.lg-ref').hidden = !(S.selected && links(S.selected)?.refs?.length);
   const lay = S.lay;
   if (!lay || !S.selected) return;
   const me = lay.boxes.get(S.selected);
@@ -532,19 +732,32 @@ function drawArrows() {
     drawn.add('i' + t.id);
     s += `<path d="${arrowPath(t, me)}" class="arrow in" marker-end="url(#ah-in)"/>`;
   }
+  for (const r of uniq(l.refs ?? [])) {
+    const t = r.rel === S.model!.rel ? visible(r.id) : undefined;
+    if (!t || t === me || drawn.has('i' + t.id)) continue;
+    drawn.add('i' + t.id);
+    s += `<path d="${arrowPath(t, me)}" class="arrow ref" marker-end="url(#ah-in)"/>`;
+  }
   arrowG.innerHTML = s;
 }
 
 // ------------------------------------------------------------------ selection
 
-function reveal(rel: string, line: number, endLine?: number, focus = false) {
-  vscode.postMessage({ type: 'reveal', rel, line, endLine, focus });
+function reveal(rel: string, line: number, endLine?: number, focus = false, uri?: string) {
+  vscode.postMessage({ type: 'reveal', rel, uri, line, endLine, focus });
 }
 
-function select(id: string | undefined, opts: { reveal?: boolean; center?: boolean; fromCursor?: boolean } = {}) {
+/** `history` marks a deliberate jump (click, search, following a call) that Back should return to. */
+function select(id: string | undefined, opts: { reveal?: boolean; center?: boolean; fromCursor?: boolean; history?: boolean } = {}) {
   const prev = S.selected;
   S.selected = id;
   const b = id ? S.byId.get(id) : undefined;
+  if (b && opts.history) {
+    // The first jump also records where it started from.
+    if (H.i < 0 && prev && prev !== id && S.byId.get(prev)) pushStop(stopOf(S.byId.get(prev)!));
+    pushStop(stopOf(b));
+  }
+  if (id) requestCalls(id);
   // Make sure the block is visible: expand collapsed ancestors.
   let expanded = false;
   for (let p = b ? S.parentOf.get(b.id) : undefined; p; p = S.parentOf.get(p.id)) {
@@ -673,11 +886,26 @@ function setAllCollapsed(collapse: boolean) {
 
 // ------------------------------------------------------------------ details panel
 
-function refItem(r: Ref & { n: number }, dir: 'out' | 'in') {
+function refItem(r: Ref & { n: number }, dir: 'out' | 'in' | 'val') {
   const here = r.rel === S.model!.rel;
   const where = here ? `L${r.line}` : `${esc(fileName(r.rel))}:${r.line}`;
-  return `<li><button class="ref ${dir}" data-id="${esc(r.id)}" data-rel="${esc(r.rel)}" data-line="${r.line}" title="${esc(r.rel)}:${r.line}">
+  return `<li><button class="ref ${dir}" data-id="${esc(r.id)}" data-rel="${esc(r.rel)}" data-line="${r.line}" data-label="${esc(r.label)}"${r.uri ? ` data-uri="${esc(r.uri)}"` : ''} title="${esc(r.rel)}:${r.line}">
     <span class="ref-name">${esc(r.label)}</span>${r.n > 1 ? `<span class="ref-n">×${r.n}</span>` : ''}<span class="ref-where ${here ? '' : 'ext'}">${where}</span></button></li>`;
+}
+
+const isCallableBlock = (b: ViewBlock) => b.kind === 'function' || b.kind === 'method' || b.kind === 'ctor';
+const fileChip = (rel: string) => (/\.([\w]+)$/.exec(rel)?.[1] ?? 'file').toLowerCase().slice(0, 5);
+
+/** Why a block may have no direct callers, so nobody takes "0" to mean dead code. */
+function noCallersHint(b: ViewBlock, l: Links): string {
+  if (!isCallableBlock(b) || l.in.length) return '';
+  if (l.refs?.length) {
+    const first = uniq(l.refs)[0];
+    return `It is passed as a value by <b>${esc(first.label)}</b>${l.refs.length > 1 ? ' and others' : ''}, so it is probably called from there: a callback, handler or registered node.`;
+  }
+  if (b.decorators?.length) return `It has <code>${esc(b.decorators[0])}</code>, so a framework probably calls it.`;
+  if (usesLsp()) return `The ${esc(S.language.name)} extension found no callers. Dynamic calls are not counted.`;
+  return 'No call to it was found in the indexed files. It may still be called dynamically, through a base class, or by code outside the workspace.';
 }
 
 function renderDetails() {
@@ -691,13 +919,13 @@ function renderDetails() {
     const hot: { b: ViewBlock; n: number }[] = [];
     for (const x of S.byId.values()) {
       if (x.kind === 'class' || x.kind === 'interface' || x.kind === 'enum') classes++;
-      if (x.kind === 'function' || x.kind === 'method' || x.kind === 'ctor') fns++;
+      if (isCallableBlock(x)) fns++;
       const n = links(x.id)?.in.length ?? 0;
       if (n) hot.push({ b: x, n });
     }
     hot.sort((a, c) => c.n - a.n);
     details.innerHTML = `
-      <div class="d-head"><span class="chip k-file">${m.lang === 'python' ? 'py' : m.lang === 'java' ? 'java' : 'js'}</span><span class="d-title">${esc(fileName(m.rel))}</span></div>
+      <div class="d-head"><span class="chip k-file">${esc(fileChip(m.rel))}</span><span class="d-title">${esc(fileName(m.rel))}</span></div>
       <div class="d-sub">${esc(m.rel)}</div>
       ${m.summary ? `<p class="d-doc">${esc(m.summary)}</p>` : ''}
       <div class="tiles">
@@ -706,28 +934,51 @@ function renderDetails() {
         <div class="tile"><b>${fns}</b><span>${fns === 1 ? 'function' : 'functions'}</span></div>
       </div>
       ${hot.length ? `<h4>Most called</h4><ul class="refs">${hot.slice(0, 8).map((h) => `<li><button class="ref sel" data-id="${esc(h.b.id)}"><span class="ref-name">${esc(h.b.qual.replace(/#\d+$/, ''))}</span><span class="ref-where">←${h.n}</span></button></li>`).join('')}</ul>` : ''}
+      ${usesLsp() ? `<p class="d-note">Select a block to ask the ${esc(S.language.name)} extension what it calls and what calls it.</p>` : ''}
       <div class="tips">
         <h4>Tips</h4>
         <ul>
           <li><kbd>Click</kbd> a block to open it and jump the editor there</li>
           <li><kbd>Double-click</kbd> to put the cursor in the code</li>
           <li><kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> walk the map, <kbd>Enter</kbd> edit</li>
+          <li><kbd>Alt</kbd>+<kbd>←</kbd> back after following a call</li>
           <li><kbd>/</kbd> search · <kbd>F</kbd> fit · <kbd>C</kbd> code/names · <kbd>O</kbd> outline</li>
         </ul>
       </div>`;
     return;
   }
-  const l = links(b.id) ?? { out: [], in: [], ext: [] };
+  const l: Links = links(b.id) ?? { out: [], in: [], ext: [], refs: [] };
   const out = uniq(l.out);
   const inn = uniq(l.in);
+  const refs = uniq(l.refs ?? []);
   const lines = b.end - b.start + 1;
-  const h = hl();
-  const maxPreview = 400;
+  // The map already shows the selected block as a code card, so only the outline needs a preview.
   let code = '';
-  for (let ln = b.start; ln <= Math.min(b.end, b.start + maxPreview - 1); ln++) {
-    code += `<div class="ln" data-line="${ln}"><i>${ln}</i><span>${h[ln - 1] ?? ''}</span></div>`;
+  if (S.view === 'outline') {
+    const h = hl();
+    const maxPreview = 400;
+    for (let ln = b.start; ln <= Math.min(b.end, b.start + maxPreview - 1); ln++) {
+      code += `<div class="ln" data-line="${ln}"><i>${ln}</i><span>${h[ln - 1] ?? ''}</span></div>`;
+    }
+    if (lines > maxPreview) code += `<div class="more">+${lines - maxPreview} more lines</div>`;
   }
-  if (lines > maxPreview) code += `<div class="more">+${lines - maxPreview} more lines</div>`;
+  let callsHtml: string;
+  const status = usesLsp() ? S.lsp.get(b.id) : 'ok';
+  if (isGroup(b)) callsHtml = '';
+  else if (status === 'loading') callsHtml = `<p class="none pulse calls-note">Asking the ${esc(S.language.name)} extension for calls…</p>`;
+  else if (status === 'unavailable') {
+    callsHtml = `<p class="none calls-note">Call information isn't available for this block. The ${esc(S.language.name)} extension doesn't report a call hierarchy here${S.language.builtIn ? '' : ', or no extension is installed'}.</p>`;
+  } else {
+    const hint = noCallersHint(b, l);
+    callsHtml = `
+    <div class="cols">
+      <div><h4 class="h-out">Calls · ${out.length}</h4>${out.length ? `<ul class="refs">${out.map((r) => refItem(r, 'out')).join('')}</ul>` : '<p class="none">none found</p>'}</div>
+      <div><h4 class="h-in">Called by · ${inn.length}</h4>${inn.length ? `<ul class="refs">${inn.map((r) => refItem(r, 'in')).join('')}</ul>` : '<p class="none">No direct callers found</p>'}
+      ${refs.length ? `<h4 class="h-ref">Passed as a value · ${refs.length}</h4><ul class="refs">${refs.map((r) => refItem(r, 'val')).join('')}</ul>` : ''}</div>
+    </div>
+    ${hint ? `<p class="d-hint">${hint}</p>` : ''}
+    ${l.ext.length ? `<details class="ext"><summary>Unlinked calls · ${l.ext.length}</summary><p class="ext-why">Codebloom couldn't tell where these go. Usually that's library code, or a target only known at runtime (an untyped parameter, <code>getattr</code>, a dict of functions).</p><div class="ext-list">${l.ext.map((e) => `<code>${esc(e)}</code>`).join('')}</div></details>` : ''}`;
+  }
   details.innerHTML = `
     <div class="d-head"><span class="chip k-${b.kind}">${esc(chip(b))}</span><span class="d-title" title="${esc(b.qual)}">${esc(isGroup(b) ? b.kind : b.qual.replace(/#\d+$/, ''))}</span></div>
     <div class="d-sub">L${b.start}–${b.end} · ${plural(lines, 'line')}</div>
@@ -736,13 +987,10 @@ function renderDetails() {
       <button class="btn copy" title="Copy this block's code with what it calls and what calls it">Copy as context</button>
     </div>
     ${b.signature ? `<div class="sig">${esc(b.signature)}</div>` : ''}
+    ${b.decorators?.length ? `<div class="decos">${b.decorators.map((d) => `<code>${esc(d)}</code>`).join('')}</div>` : ''}
     ${b.detail && !isGroup(b) ? `<p class="d-doc">${esc(b.detail)}</p>` : ''}
-    <div class="cols">
-      <div><h4 class="h-out">Calls · ${out.length}</h4>${out.length ? `<ul class="refs">${out.map((r) => refItem(r, 'out')).join('')}</ul>` : '<p class="none">none</p>'}</div>
-      <div><h4 class="h-in">Called by · ${inn.length}</h4>${inn.length ? `<ul class="refs">${inn.map((r) => refItem(r, 'in')).join('')}</ul>` : '<p class="none">none</p>'}</div>
-    </div>
-    ${l.ext.length ? `<details class="ext"><summary>External calls · ${l.ext.length}</summary><div class="ext-list">${l.ext.map((e) => `<code>${esc(e)}</code>`).join('')}</div></details>` : ''}
-    <div class="d-code code" style="--gw:${String(b.end).length}ch">${code}</div>`;
+    ${callsHtml}
+    ${code ? `<div class="d-code code" style="--gw:${String(b.end).length}ch">${code}</div>` : ''}`;
 }
 
 details.addEventListener('click', (e) => {
@@ -751,8 +999,15 @@ details.addEventListener('click', (e) => {
   if (ref) {
     const id = ref.dataset.id!;
     const rel = ref.dataset.rel;
-    if (!rel || rel === S.model?.rel) select(id, { reveal: true, center: true });
-    else reveal(rel, Number(ref.dataset.line), undefined, false);
+    if (!rel || rel === S.model?.rel) select(id, { reveal: true, center: true, history: true });
+    else {
+      // Following a call into another file: remember where we were, then go.
+      const cur = S.selected ? S.byId.get(S.selected) : undefined;
+      if (cur && H.i < 0) pushStop(stopOf(cur));
+      const stop: Stop = { rel, uri: ref.dataset.uri, id, line: Number(ref.dataset.line), label: ref.dataset.label ?? id };
+      pushStop(stop);
+      goStop(stop);
+    }
     return;
   }
   const b = S.selected ? S.byId.get(S.selected) : undefined;
@@ -782,7 +1037,7 @@ function renderOutline() {
       <span class="label ${isGroup(b) ? 'dim' : ''}">${esc(label(b))}</span>
       ${b.signature && !isGroup(b) ? `<span class="o-sig">${esc(b.signature)}</span>` : ''}
       <span class="range">${b.start}–${b.end}</span>
-      ${l?.in.length ? `<span class="badge in">←${l.in.length}</span>` : ''}${l?.out.length ? `<span class="badge out">→${uniq(l.out).length}</span>` : ''}
+      ${inCount(l) ? `<span class="badge in" title="${inTitle(l!)}">←${inCount(l)}</span>` : ''}${l?.out.length ? `<span class="badge out">→${uniq(l.out).length}</span>` : ''}
     </div>`;
     if (kids && !collapsed) s += b.children.map((c) => row(c, depth + 1, hue)).join('');
     return s;
@@ -801,7 +1056,7 @@ outlineEl.addEventListener('click', (e) => {
     renderOutline();
     return;
   }
-  select(r.dataset.id, { reveal: true });
+  select(r.dataset.id, { reveal: true, history: true });
 });
 outlineEl.addEventListener('dblclick', (e) => {
   const r = (e.target as HTMLElement).closest<HTMLElement>('.o-row');
@@ -852,7 +1107,7 @@ function pickHit(b: ViewBlock | undefined) {
   results.hidden = true;
   searchInput.value = '';
   searchInput.blur();
-  select(b.id, { reveal: true, center: true });
+  select(b.id, { reveal: true, center: true, history: true });
   stage.focus();
 }
 searchInput.addEventListener('input', runSearch);
@@ -953,7 +1208,7 @@ nodesEl.addEventListener('click', (e) => {
     if (b) reveal(S.model!.rel, b.defLine, b.end, true);
     return;
   }
-  select(id, { reveal: true });
+  select(id, { reveal: true, history: true });
 });
 nodesEl.addEventListener('dblclick', (e) => {
   const n = (e.target as HTMLElement).closest<HTMLElement>('.node');
@@ -996,6 +1251,11 @@ function navigate(key: string) {
 window.addEventListener('keydown', (e) => {
   const inInput = (e.target as HTMLElement).closest('input, textarea');
   if (inInput) return;
+  if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+    e.preventDefault();
+    step(e.key === 'ArrowLeft' ? -1 : 1);
+    return;
+  }
   if (e.key === '/' || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f')) {
     e.preventDefault();
     searchInput.focus();
@@ -1038,6 +1298,12 @@ window.addEventListener('keydown', (e) => {
     case '?':
       toggleHelp();
       break;
+    case '[':
+      step(-1);
+      break;
+    case ']':
+      step(1);
+      break;
     case 'Enter': {
       const b = S.selected ? S.byId.get(S.selected) : undefined;
       if (b) reveal(S.model!.rel, b.defLine, b.end, true);
@@ -1065,6 +1331,7 @@ function toggleHelp() {
   h.innerHTML = `<div class="help-card"><h3>Keyboard</h3><dl>
     <dt>/</dt><dd>Search blocks</dd><dt>↑ ↓</dt><dd>Previous / next sibling</dd><dt>← →</dt><dd>Parent / first child</dd>
     <dt>Enter</dt><dd>Edit the selected block</dd><dt>Space</dt><dd>Fold / unfold</dd><dt>C</dt><dd>Names ↔ Code</dd><dt>O</dt><dd>Map ↔ Outline</dd>
+    <dt>Alt ← →</dt><dd>Back / forward (also [ and ])</dd>
     <dt>F</dt><dd>Fit map</dd><dt>+ − 0</dt><dd>Zoom in / out / reset</dd><dt>D</dt><dd>Details panel</dd><dt>Esc</dt><dd>Deselect</dd></dl>
     <p>Drag to pan · scroll or pinch to zoom</p></div>`;
 }
@@ -1083,14 +1350,20 @@ function setMode(mode: Mode) {
 function setView(view: View) {
   S.view = view;
   renderChrome();
-  if (view === 'outline') renderOutline();
-  else {
+  if (view === 'outline') {
+    renderOutline();
+    renderDetails();
+  } else {
     relayout('keep');
   }
   save();
 }
+/** Below this width the details panel floats over the map instead of taking a column. */
+const NARROW = 760;
+const isNarrow = () => window.innerWidth <= NARROW;
 function toggleDetails() {
-  S.details = !S.details;
+  if (isNarrow()) S.narrowOpen = !S.narrowOpen;
+  else S.details = !S.details;
   renderChrome();
   save();
   queueVisible();
@@ -1109,8 +1382,43 @@ document.querySelector('.dock')!.addEventListener('click', (e) => {
   else if (t.classList.contains('collapse-all')) setAllCollapsed(true);
 });
 $('.toggle-details').addEventListener('click', toggleDetails);
+$('.maximize').addEventListener('click', () => vscode.postMessage({ type: 'maximize' }));
+$('.nav .back').addEventListener('click', () => step(-1));
+$('.nav .fwd').addEventListener('click', () => step(1));
+// Mouse back/forward buttons.
+window.addEventListener('mouseup', (e) => {
+  if (e.button === 3 || e.button === 4) {
+    e.preventDefault();
+    step(e.button === 3 ? -1 : 1);
+  }
+});
+$('.trail').addEventListener('click', (e) => {
+  const t = (e.target as HTMLElement).closest<HTMLElement>('.t-stop');
+  if (!t) return;
+  H.i = Number(t.dataset.i);
+  goStop(H.stops[H.i]);
+});
+$('.stats').addEventListener('click', (e) => {
+  const t = (e.target as HTMLElement).closest<HTMLElement>('[data-setting]');
+  if (t) vscode.postMessage({ type: 'openSetting', key: t.dataset.setting });
+});
+$('.banner').addEventListener('click', (e) => {
+  const t = (e.target as HTMLElement).closest<HTMLElement>('[data-act]');
+  if (!t) return;
+  if (t.dataset.act === 'enable') vscode.postMessage({ type: 'enableLanguage', languageId: t.dataset.lang });
+  else if (t.dataset.act === 'find') vscode.postMessage({ type: 'findExtension', languageId: t.dataset.lang });
+  S.notice = null;
+  renderBanner();
+});
 
 new ResizeObserver(() => queueVisible()).observe(stage);
+window.addEventListener('resize', () => {
+  // Leaving the narrow layout closes the floating panel.
+  if (!isNarrow() && S.narrowOpen) {
+    S.narrowOpen = false;
+    renderChrome();
+  }
+});
 
 // Theme changes swap body classes; recolor text tones.
 new MutationObserver(() => {
@@ -1123,7 +1431,11 @@ new MutationObserver(() => {
 window.addEventListener('message', (e) => {
   const msg = e.data;
   if (msg.type === 'model') onModel(msg);
-  else if (msg.type === 'cursor') {
+  else if (msg.type === 'calls') onCalls(msg);
+  else if (msg.type === 'notice') {
+    S.notice = msg.notice;
+    if (S.model) renderBanner();
+  } else if (msg.type === 'cursor') {
     const b = blockAtLine(msg.line);
     cursorId = b?.id;
     if (b && b.id !== S.selected) select(b.id, { fromCursor: true });
@@ -1134,4 +1446,4 @@ window.addEventListener('message', (e) => {
 vscode.postMessage({ type: 'ready' });
 
 // Exposed for the browser harness used in development.
-(window as any).__codebloom = { S, relayout, ownRows };
+(window as any).__codebloom = { S, relayout, ownRows, select, setView };

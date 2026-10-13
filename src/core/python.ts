@@ -101,8 +101,10 @@ class PyExtractor {
     const def = node.type === 'decorated_definition' ? node.childForFieldName('definition') : node;
     if (!def) return;
     const name = def.childForFieldName('name')?.text ?? '?';
+    const decorators = node.type === 'decorated_definition' ? node.namedChildren.filter((c) => c?.type === 'decorator').map((c) => oneLine(c!.text, 60)) : [];
     if (def.type === 'class_definition') {
       const blk = this.b.make('class', name, parent, [node], def, start);
+      if (decorators.length) blk.decorators = decorators;
       const sup = def.childForFieldName('superclasses');
       if (sup) {
         blk.bases = sup.namedChildren
@@ -117,6 +119,7 @@ class PyExtractor {
       const kind = inClass ? (name === '__init__' ? 'ctor' : 'method') : 'function';
       const blk = this.b.make(kind, name, parent, [node], def, start);
       blk.signature = signature(def);
+      if (decorators.length) blk.decorators = decorators;
       const params = def.childForFieldName('parameters');
       for (const p of params?.namedChildren ?? []) {
         if (p && (p.type === 'typed_parameter' || p.type === 'typed_default_parameter')) {
@@ -197,9 +200,32 @@ function enclosingClass(b: Block | undefined): Block | undefined {
   return b;
 }
 
+/** Record a function passed as a value: `graph.add_node("plan", plan_node)`, `{"a": handler}`. */
+function ref(n: Node | null, blk: Block, b: GraphBuilder) {
+  if (n?.type === 'keyword_argument') n = n.childForFieldName('value');
+  if (!n) return;
+  const line = lineOf(n);
+  if (n.type === 'identifier') {
+    if (n.text !== 'self' && n.text !== 'cls') b.call(blk, { kind: 'name', name: n.text, line, ref: true });
+  } else if (n.type === 'attribute') {
+    const obj = n.childForFieldName('object');
+    const name = n.childForFieldName('attribute')?.text ?? '';
+    if (obj?.type === 'identifier' && (obj.text === 'self' || obj.text === 'cls')) b.call(blk, { kind: 'self', name, line, ref: true });
+    else if (obj && /^[\w.]+$/.test(obj.text)) b.call(blk, { kind: 'member', name, obj: obj.text, line, ref: true });
+  }
+}
+
 const calls: CallVisitor = {
-  types: new Set(['call', 'assignment']),
+  types: new Set(['call', 'assignment', 'dictionary', 'list', 'set']),
   visit(node, blk, b) {
+    if (node.type === 'dictionary') {
+      for (const p of node.namedChildren) if (p?.type === 'pair') ref(p.childForFieldName('value'), blk, b);
+      return;
+    }
+    if (node.type === 'list' || node.type === 'set') {
+      for (const c of node.namedChildren) ref(c, blk, b);
+      return;
+    }
     if (node.type === 'assignment') {
       const left = node.childForFieldName('left');
       const right = node.childForFieldName('right');
@@ -216,6 +242,8 @@ const calls: CallVisitor = {
     }
     const fn = node.childForFieldName('function');
     if (!fn) return;
+    const args = node.childForFieldName('arguments');
+    if (args?.type === 'argument_list') for (const a of args.namedChildren) ref(a, blk, b);
     const line = lineOf(node);
     if (fn.type === 'identifier') {
       if (fn.text !== 'super') b.call(blk, { kind: 'name', name: fn.text, line });

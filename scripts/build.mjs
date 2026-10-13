@@ -18,7 +18,10 @@ const configs = [
   { ...common, entryPoints: ['src/webview/main.ts'], outfile: 'dist/webview.js', platform: 'browser', format: 'iife', target: 'es2020' },
   { ...common, entryPoints: ['src/webview/style.css'], outfile: 'dist/webview.css' },
 ];
-if (!production) configs.push({ ...common, sourcemap: false, entryPoints: ['src/core/index.ts'], outfile: 'dist-test/core.js', platform: 'node', format: 'cjs', target: 'node18', alias });
+if (!production) {
+  configs.push({ ...common, sourcemap: false, entryPoints: ['src/core/index.ts'], outfile: 'dist-test/core.js', platform: 'node', format: 'cjs', target: 'node18', alias });
+  configs.push({ ...common, sourcemap: false, entryPoints: ['src/webview/highlight.ts'], outfile: 'dist-test/highlight.js', platform: 'node', format: 'cjs', target: 'node18' });
+}
 
 if (watch) {
   for (const c of configs) await (await esbuild.context(c)).watch();
