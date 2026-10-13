@@ -1,3 +1,5 @@
+<p align="center"><img src="media/logo.png" width="112" alt="Codebloom logo"></p>
+
 # Codebloom: code mind maps for VS Code
 
 **See any Python, Java or JavaScript file as a mind map, with the real code on every branch.**
