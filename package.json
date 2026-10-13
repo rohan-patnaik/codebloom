@@ -9,6 +9,14 @@
     "email": "rohanpatnaik1997@gmail.com"
   },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rohan-patnaik/codebloom.git"
+  },
+  "homepage": "https://github.com/rohan-patnaik/codebloom#readme",
+  "bugs": {
+    "url": "https://github.com/rohan-patnaik/codebloom/issues"
+  },
   "icon": "media/icon.png",
   "galleryBanner": {
     "color": "#2a2438",
