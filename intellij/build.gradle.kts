@@ -1,6 +1,7 @@
 import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.kotlin.gradle.dsl.JvmDefaultMode
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
+import groovy.json.JsonSlurper
 
 plugins {
     id("org.jetbrains.kotlin.jvm") version "2.4.21"
@@ -8,7 +9,11 @@ plugins {
 }
 
 group = "io.github.rohanpatnaik"
-version = providers.gradleProperty("pluginVersion").get()
+// Both editor packages share the release version in package.json.
+val releaseVersion = providers.fileContents(layout.projectDirectory.file("../package.json")).asText.map {
+    (JsonSlurper().parseText(it) as Map<*, *>)["version"] as String
+}
+version = releaseVersion.get()
 
 kotlin {
     jvmToolchain(21)
@@ -38,7 +43,7 @@ dependencies {
 
 intellijPlatform {
     pluginConfiguration {
-        version = providers.gradleProperty("pluginVersion")
+        version = releaseVersion
         ideaVersion {
             sinceBuild = "243"
             untilBuild = provider { null }

@@ -114,6 +114,18 @@ For other languages, blocks and calls are whatever the language extension report
 
 Everything runs locally. Codebloom makes no network requests and collects no telemetry. For languages other than Python, Java and JavaScript it asks your installed language extensions for the outline and call hierarchy, through VS Code.
 
+## Releases
+
+Both editor packages use the version in the root `package.json`. Bump it once with `npm version <version> --no-git-tag-version`, update both changelogs, and merge the change. Publish a GitHub release tagged `v<version>` to build, test and submit that version to **VS Code Marketplace, Open VSX and JetBrains Marketplace**. Each store runs independently, so a failed upload does not prevent attempts to the other stores. A failed store is a failed workflow job, not a successful release.
+
+One-time setup in [GitHub Actions secrets](https://github.com/rohan-patnaik/codebloom/settings/secrets/actions):
+
+- `VSCE_PAT`: Azure DevOps token with **Marketplace → Manage** for the `rohan-patnaik` publisher.
+- `OVSX_PAT`: Open VSX publishing token for `rohan-patnaik`.
+- `JETBRAINS_MARKETPLACE_TOKEN`: JetBrains Marketplace permanent token with access to Codebloom.
+
+The **Build and release all marketplaces** workflow also supports **Run workflow** on `main` to catch up a missing store. Versions already present are skipped; missing credentials and rejected uploads fail visibly. Download both packages from the workflow's build artifact. JetBrains submissions still require review, so the same version may become public later there. Shared features use the same webview; IDE-specific integration is tested separately.
+
 ## License
 
 MIT
