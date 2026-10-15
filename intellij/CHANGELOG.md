@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.0
+
+- Align the JetBrains plugin version with VS Code and Open VSX. Both editor packages now take their version from the root `package.json` and ship through the same release workflow.
+- Keeps the existing JetBrains features and shared map UI; this release corrects the separate version numbering.
+
 ## 0.1.0
 
 First release for IntelliJ IDEA and other JetBrains IDEs (2024.3+).

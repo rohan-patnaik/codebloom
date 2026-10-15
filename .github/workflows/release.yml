@@ -1,0 +1,92 @@
+name: Build and release all marketplaces
+
+on:
+  pull_request:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.release.tag_name || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.ref }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci
+      - name: Check release version
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: echo "version=$(node scripts/release-version.mjs)" >> "$GITHUB_OUTPUT"
+      - name: Check VS Code package
+        run: |
+          npm run typecheck
+          npm test
+          npm run package
+      - name: Check and build JetBrains package
+        working-directory: intellij
+        run: xvfb-run -a ./gradlew test buildPlugin verifyPluginStructure --no-daemon
+      - name: Collect matching packages
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir release-packages
+          cp "codebloom-$VERSION.vsix" release-packages/
+          cp "intellij/build/distributions/codebloom-intellij-$VERSION.zip" release-packages/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: codebloom-${{ steps.version.outputs.version }}
+          path: release-packages/*
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - store: vscode
+            secret: VSCE_PAT
+          - store: open-vsx
+            secret: OVSX_PAT
+          - store: jetbrains
+            secret: JETBRAINS_MARKETPLACE_TOKEN
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.ref }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: codebloom-${{ needs.build.outputs.version }}
+          path: release-packages
+      - name: Publish ${{ matrix.store }}
+        env:
+          PUBLISH_TOKEN: ${{ secrets[matrix.secret] }}
+        run: node scripts/publish-marketplace.mjs "${{ matrix.store }}"
