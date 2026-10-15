@@ -63,6 +63,10 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    environment: ${{ matrix.store }}
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -70,7 +74,7 @@ jobs:
           - store: vscode
             secret: VSCE_PAT
           - store: open-vsx
-            secret: OVSX_PAT
+            secret: ''
           - store: jetbrains
             secret: JETBRAINS_MARKETPLACE_TOKEN
     steps:
