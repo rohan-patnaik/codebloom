@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.0
+
+- No changes to the VS Code extension; the version moves with the JetBrains plugin.
+
 ## 0.3.0
 
 - **Read through a file on the map.** The selected block's card now scrolls through all of its code instead of stopping at `codebloom.maxCardLines`. Scroll past the end (about two more wheel notches) to move on to the next block in the file; scroll past the top to go back to the previous one, opened at its end. The arrows, details panel and editor follow along. Trackpad momentum never skips a block, and the card's footer shows what comes next.

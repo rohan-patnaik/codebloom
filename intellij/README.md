@@ -15,7 +15,7 @@ Java gets exact block kinds, signatures, Javadoc, annotations, `new` → constru
 
 ## Use
 
-Open the **Codebloom** tool window on the right, or choose **Open Codebloom Map** from the editor or Project view context menu (<kbd>⌘⌥⇧M</kbd> / <kbd>Ctrl+Alt+Shift+M</kbd>). The map follows the selected editor and its caret. **Copy Block as LLM Context** in the editor context menu copies the block at the caret with its calls and callers.
+Open the **Codebloom** tool window on the right, or choose **Open Codebloom Map** from the editor or Project view context menu (<kbd>⌘⌥⇧M</kbd> / <kbd>Ctrl+Alt+Shift+M</kbd>). To give the map more room, choose **Open Codebloom Map in Editor Tab**: it opens like any other file, so you can split it beside your code, drag it to another window or maximize it. The map follows the selected editor and its caret. **Copy Block as LLM Context** in the editor context menu copies the block at the caret with its calls and callers.
 
 ## Build
 

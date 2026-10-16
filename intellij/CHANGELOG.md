@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.0
+
+- **Open Codebloom Map in Editor Tab** (editor, Project view and editor-tab menus) opens the map as an editor tab, like any other file, instead of the narrow tool window. It can be split, dragged to another window or given the whole editor, and its tab is titled after the file on the map. The tool window stays.
+- In a map tab, clicking a block moves editors already showing that file without covering the map; **Go to code** jumps there. The full-width button hides the tool windows (and brings them back).
+
 ## 0.3.0
 
 - The selected block's card scrolls through all of its code. Scroll past its end to move on to the next block in the file, or past its top to go back; the arrows and details panel follow along.

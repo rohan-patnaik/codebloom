@@ -50,7 +50,13 @@ class SelfTestActivity : ProjectActivity {
             ApplicationManager.getApplication().invokeLater {
                 val vf = project.guessProjectDir()?.findFileByRelativePath(rel) ?: return@invokeLater
                 FileEditorManager.getInstance(project).openFile(vf, true)
-                ToolWindowManager.getInstance(project).getToolWindow(TOOL_WINDOW_ID)?.activate(null)
+                if (System.getProperty("codebloom.selfTestTab") == "true") {
+                    MapTabs.open(project, vf)
+                    val tabs = FileEditorManager.getInstance(project).openFiles.joinToString { (it as? CodebloomMapFile)?.let { "map tab" } ?: it.name }
+                    SelfTest.report(mapOf("step" to "tab", "openTabs" to tabs, "selected" to FileEditorManager.getInstance(project).selectedFiles.joinToString { it.javaClass.simpleName }))
+                } else {
+                    ToolWindowManager.getInstance(project).getToolWindow(TOOL_WINDOW_ID)?.activate(null)
+                }
             }
         }
     }

@@ -24,7 +24,10 @@ import javax.swing.SwingConstants
 /** Holds the project's map panel so actions can reach it. */
 @Service(Service.Level.PROJECT)
 class CodebloomService {
+    /** The map in the Codebloom tool window. */
     var panel: MapPanel? = null
+    /** The project's map tab, once opened. */
+    var mapFile: CodebloomMapFile? = null
 }
 
 class CodebloomToolWindowFactory : ToolWindowFactory, DumbAware {
@@ -35,7 +38,7 @@ class CodebloomToolWindowFactory : ToolWindowFactory, DumbAware {
             toolWindow.contentManager.addContent(factory.createContent(label, "", false))
             return
         }
-        val panel = MapPanel(project, toolWindow)
+        val panel = MapPanel(project, ToolWindowHost(project, toolWindow))
         val content = factory.createContent(panel.component, "", false)
         content.setDisposer(panel)
         toolWindow.contentManager.addContent(content)

@@ -19,6 +19,7 @@ import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.FileEditorManagerEvent
 import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
+import com.intellij.openapi.fileEditor.TextEditor
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
@@ -48,11 +49,28 @@ import java.awt.Color
 import java.awt.datatransfer.StringSelection
 import javax.swing.JComponent
 
+/** Where a map is shown: the Codebloom tool window or an editor tab. */
+interface MapHost {
+    /** The map is on screen, so rebuilding it is worth the work. */
+    val isVisible: Boolean
+    /** True for a map in an editor tab, which mustn't be covered by the code it's showing. */
+    val inEditor: Boolean
+    fun toggleMaximize()
+    /** The map switched to another file. */
+    fun fileChanged() {}
+}
+
+class ToolWindowHost(private val project: Project, val toolWindow: ToolWindow) : MapHost {
+    override val isVisible get() = toolWindow.isVisible
+    override val inEditor get() = false
+    override fun toggleMaximize() = ToolWindowManager.getInstance(project).let { it.setMaximized(toolWindow, !it.isMaximized(toolWindow)) }
+}
+
 /**
- * The Codebloom tool window: the same mind-map webview the VS Code extension
- * uses, running in JCEF. It follows the selected editor and mirrors its caret.
+ * A Codebloom map: the same mind-map webview the VS Code extension uses,
+ * running in JCEF. It follows the selected editor and mirrors its caret.
  */
-class MapPanel(private val project: Project, private val toolWindow: ToolWindow) : Disposable {
+class MapPanel(private val project: Project, private val host: MapHost) : Disposable {
     private val browser = JBCefBrowser()
     private val query = JBCefJSQuery.create(browser as JBCefBrowserBase)
     private val rebuildAlarm = Alarm(this)
@@ -65,6 +83,8 @@ class MapPanel(private val project: Project, private val toolWindow: ToolWindow)
     private val callers = HashMap<String, Map<String, Any?>>()
 
     val component: JComponent get() = browser.component
+    /** Name of the file on the map. */
+    val fileName: String? get() = file?.name
 
     init {
         Disposer.register(this, query)
@@ -91,20 +111,24 @@ class MapPanel(private val project: Project, private val toolWindow: ToolWindow)
         bus.subscribe(FileEditorManagerListener.FILE_EDITOR_MANAGER, object : FileEditorManagerListener {
             override fun selectionChanged(event: FileEditorManagerEvent) {
                 val f = event.newFile ?: return
+                // Selecting a map tab isn't a file to map; it may be this map coming into view.
+                if (f is CodebloomMapFile) {
+                    if (host.isVisible) shown()
+                    return
+                }
                 if (f == file) post(mapOf("type" to "notice", "notice" to null)) else open(f)
             }
         })
         bus.subscribe(DumbService.DUMB_MODE, object : DumbService.DumbModeListener {
             override fun exitDumbMode() = scheduleRebuild(0)
         })
-        bus.subscribe(ToolWindowManagerListener.TOPIC, object : ToolWindowManagerListener {
-            override fun stateChanged(manager: ToolWindowManager) {
-                if (stale && toolWindow.isVisible) {
-                    stale = false
-                    scheduleRebuild(0)
+        if (host is ToolWindowHost) {
+            bus.subscribe(ToolWindowManagerListener.TOPIC, object : ToolWindowManagerListener {
+                override fun stateChanged(manager: ToolWindowManager) {
+                    if (host.isVisible) shown()
                 }
-            }
-        })
+            })
+        }
         ApplicationManager.getApplication().messageBus.connect(this).subscribe(LafManagerListener.TOPIC, LafManagerListener { applyTheme() })
         val multicaster = EditorFactory.getInstance().eventMulticaster
         multicaster.addDocumentListener(object : DocumentListener {
@@ -123,6 +147,7 @@ class MapPanel(private val project: Project, private val toolWindow: ToolWindow)
 
     /** Show a file on the map, or explain why it can't be. */
     fun open(vf: VirtualFile) {
+        if (vf is CodebloomMapFile) return
         val psi = PsiManager.getInstance(project).findFile(vf)
         if (psi == null || !MapBuilder.canMap(psi)) {
             if (file != null) {
@@ -133,6 +158,7 @@ class MapPanel(private val project: Project, private val toolWindow: ToolWindow)
         }
         if (vf != file) {
             file = vf
+            host.fileChanged()
             map = null
             sentText = null
             callers.clear()
@@ -140,12 +166,19 @@ class MapPanel(private val project: Project, private val toolWindow: ToolWindow)
         rebuild()
     }
 
-    /** Set when the file changed while the tool window was hidden. */
+    /** Set when the file changed while the map was hidden. */
     private var stale = false
+
+    /** The map came into view: catch up on changes made while it was hidden. */
+    private fun shown() {
+        if (!stale) return
+        stale = false
+        scheduleRebuild(0)
+    }
 
     private fun scheduleRebuild(delay: Int) {
         // A hidden map costs nothing; catch up when it's shown again.
-        if (!toolWindow.isVisible) {
+        if (!host.isVisible) {
             stale = true
             return
         }
@@ -241,14 +274,14 @@ class MapPanel(private val project: Project, private val toolWindow: ToolWindow)
                 sentText = null
                 applyTheme()
                 val m0 = map
-                if (m0 != null) postModel(m0) else FileEditorManager.getInstance(project).selectedFiles.firstOrNull()?.let(::open)
+                if (m0 != null) postModel(m0) else FileEditorManager.getInstance(project).selectedFiles.firstOrNull { it !is CodebloomMapFile }?.let(::open)
             }
             "reveal" -> reveal(m)
             "copyContext" -> copyContext(m["id"] as? String)
             "mode" -> (m["mode"] as? String)?.let { PropertiesComponent.getInstance().setValue("codebloom.mode", it) }
             "calls" -> (m["id"] as? String)?.let(::findCallers)
             "selftest" -> SelfTest.report(m)
-            "maximize" -> ToolWindowManager.getInstance(project).let { it.setMaximized(toolWindow, !it.isMaximized(toolWindow)) }
+            "maximize" -> host.toggleMaximize()
         }
     }
 
@@ -262,8 +295,17 @@ class MapPanel(private val project: Project, private val toolWindow: ToolWindow)
         val focus = m["focus"] == true
         ignoreCaretUntil = System.currentTimeMillis() + 500
         val descriptor = OpenFileDescriptor(project, target, line.coerceAtLeast(0), 0)
+        val fem = FileEditorManager.getInstance(project)
         if (focus) descriptor.navigate(true)
-        else FileEditorManager.getInstance(project).openTextEditor(descriptor, false)?.scrollingModel?.scrollToCaret(ScrollType.CENTER_UP)
+        else if (host.inEditor) {
+            // Opening the file here could replace the map's own tab; only move editors already showing it.
+            for (ed in fem.selectedEditors) {
+                val text = (ed as? TextEditor)?.editor ?: continue
+                if (ed.file != target) continue
+                text.caretModel.moveToOffset(text.document.getLineStartOffset(line.coerceIn(0, (text.document.lineCount - 1).coerceAtLeast(0))))
+                text.scrollingModel.scrollToCaret(ScrollType.CENTER_UP)
+            }
+        } else fem.openTextEditor(descriptor, false)?.scrollingModel?.scrollToCaret(ScrollType.CENTER_UP)
         if (target != file) open(target)
     }
 

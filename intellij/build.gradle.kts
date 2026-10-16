@@ -72,11 +72,13 @@ tasks.processResources {
 }
 
 // Development: `./gradlew runIde -Pcodebloom.selfTestProject=<dir> -Pcodebloom.selfTestFile=<rel path> -Pcodebloom.selfTestOut=<dir>`
-// opens the project, maps the file, reports what the page shows, and exits.
+// opens the project, maps the file, reports what the page shows, and exits. Add `-Pcodebloom.selfTestTab=true`
+// to show the map in an editor tab instead of the tool window.
 tasks.runIde {
     val selfTestProject = providers.gradleProperty("codebloom.selfTestProject")
     val selfTestFile = providers.gradleProperty("codebloom.selfTestFile")
     val selfTestOut = providers.gradleProperty("codebloom.selfTestOut")
+    val selfTestTab = providers.gradleProperty("codebloom.selfTestTab")
     argumentProviders += CommandLineArgumentProvider { selfTestProject.map { listOf(it) }.getOrElse(emptyList()) }
     jvmArgumentProviders += CommandLineArgumentProvider {
         if (!selfTestProject.isPresent) emptyList()
@@ -88,6 +90,7 @@ tasks.runIde {
             "-Djb.privacy.policy.text=<!--999.999-->",
             "-Dide.show.tips.on.startup.default.value=false",
             "-Didea.is.internal=false",
+            "-Dcodebloom.selfTestTab=${selfTestTab.getOrElse("false")}",
         )
     }
 }
