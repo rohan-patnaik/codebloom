@@ -206,3 +206,30 @@ test('jsx: handlers in props are references', async () => {
   p.set(parsers.parse('a.jsx', 'function go() {}\nfunction App() {\n  return <b onClick={go} />;\n}\n'));
   assert.deepStrictEqual(refs(p.view('a.jsx'), 'go'), ['a.jsx:App']);
 });
+
+test('layout: long cards keep their height and scroll through every line', () => {
+  const { layout, K } = require('../dist-test/layout.js');
+  const lines = Array.from({ length: 200 }, (_, i) => `line ${i + 1}`);
+  const block = { id: 'long', kind: 'function', name: 'long', qual: 'long', start: 1, end: 120, defLine: 1, children: [] };
+  const short = { id: 'short', kind: 'function', name: 'short', qual: 'short', start: 121, end: 125, defLine: 121, children: [] };
+  const m = { text: (s) => s.length * 7, ch: 7, lineH: 18 };
+  const run = (selected) =>
+    layout(
+      {
+        rel: 'x.py', lineCount: 200, blocks: [block, short], lines, collapsed: new Set(),
+        cards: () => true, chip: () => 'def', label: (b) => b.name, badges: () => [],
+        maxCardLines: 24, foot: (b) => b.id === selected, m,
+      },
+      10,
+    ).boxes;
+  const boxes = run('short');
+  const long = boxes.get('long');
+  assert.equal(long.rows.length, 120, 'every line is rendered for scrolling');
+  assert.equal(long.view, 24);
+  assert.equal(long.more, 96);
+  assert.ok(long.foot);
+  assert.equal(long.h, K.cardHead + 24 * 18 + K.cardPad + K.cardFoot + 2);
+  // A card that fits gets a footer only while it's selected (for the "scroll on" hint).
+  assert.equal(boxes.get('short').foot, true);
+  assert.equal(run(undefined).get('short').foot, false);
+});

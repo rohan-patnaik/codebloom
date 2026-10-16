@@ -54,6 +54,16 @@ exports.run = async function () {
     await vscode.window.showTextDocument(js, vscode.ViewColumn.One);
     await until(() => api.panel() && api.panel().panel.title.includes('app.js'), 5000);
   });
+  await check('open in new tab moves the map into the code\'s editor group', async () => {
+    const js = await vscode.workspace.openTextDocument(vscode.Uri.joinPath(root, 'js/app.js'));
+    const ed = await vscode.window.showTextDocument(js, vscode.ViewColumn.One);
+    await vscode.commands.executeCommand('codebloom.openMapInTab');
+    await until(() => api.panel()?.panel.viewColumn === ed.viewColumn && api.panel().panel.active, 5000);
+    // Put things back the way the remaining checks expect: code in one, map beside it.
+    api.panel().panel.reveal(vscode.ViewColumn.Two, true);
+    await until(() => api.panel().panel.viewColumn === vscode.ViewColumn.Two, 5000);
+    await vscode.window.showTextDocument(js, vscode.ViewColumn.One);
+  });
   await check('copy block context', async () => {
     const ed = vscode.window.activeTextEditor;
     ed.selection = new vscode.Selection(6, 0, 6, 0);

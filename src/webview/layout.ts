@@ -22,9 +22,16 @@ export interface Box {
   kidCount: number;
   collapsed: boolean;
   card: boolean;
+  /** Every row of the card's own code; the card shows `view` of them and scrolls the rest. */
   rows?: Row[];
-  /** Lines cut off at the bottom of the card. */
+  /** Rows visible at once. */
+  view?: number;
+  /** Lines below the visible rows, reached by scrolling. */
   more?: number;
+  /** Lines past the scrollable limit, only reachable in the editor. */
+  cut?: number;
+  /** Card has a footer (scroll hint or "keep scrolling"). */
+  foot?: boolean;
   /** Layout-only: subtree size. */
   sw?: number;
   sh?: number;
@@ -70,6 +77,8 @@ export interface LayoutInput {
   label: (b: ViewBlock) => string;
   badges: (b: ViewBlock) => string[];
   maxCardLines: number;
+  /** Cards that always get a footer, even when all their code fits (the selected one). */
+  foot?: (b: ViewBlock) => boolean;
   m: Metrics;
 }
 
@@ -87,6 +96,8 @@ export const K = {
   cardPad: 10,
   cardFoot: 22,
   maxCardW: 760,
+  /** Rows a card can scroll through; longer blocks end with a link to the editor. */
+  maxScrollRows: 4000,
 };
 
 const isGroup = (b: ViewBlock) => ['imports', 'globals', 'fields', 'script', 'doc', 'main'].includes(b.kind);
@@ -132,19 +143,14 @@ function sizeBox(inp: LayoutInput, box: Box) {
     return;
   }
   let rows = ownRows(b, inp.lines);
-  if (rows.length > inp.maxCardLines) {
-    let shown = 0;
-    let cut = rows.length;
-    for (let i = 0; i < rows.length; i++) {
-      if (++shown > inp.maxCardLines) {
-        cut = i;
-        break;
-      }
-    }
-    const rest = rows.slice(cut);
-    box.more = rest.reduce<number>((n, r) => n + (typeof r === 'number' ? 1 : r.gap), 0);
-    rows = rows.slice(0, cut);
+  const count = (rs: Row[]) => rs.reduce<number>((n, r) => n + (typeof r === 'number' ? 1 : r.gap), 0);
+  if (rows.length > K.maxScrollRows) {
+    box.cut = count(rows.slice(K.maxScrollRows));
+    rows = rows.slice(0, K.maxScrollRows);
   }
+  box.view = Math.min(rows.length, inp.maxCardLines);
+  if (rows.length > box.view) box.more = count(rows.slice(box.view));
+  box.foot = !!(box.more || box.cut || inp.foot?.(b));
   box.rows = rows;
   let maxLen = 0;
   for (const r of rows) {
@@ -153,8 +159,8 @@ function sizeBox(inp: LayoutInput, box: Box) {
     if (len > maxLen) maxLen = len;
   }
   const gutter = String(b.end).length * inp.m.ch + 16;
-  box.w = Math.ceil(Math.min(K.maxCardW, Math.max(pill, gutter + Math.min(maxLen, 110) * inp.m.ch + 2 * K.cardPad + 8)));
-  box.h = K.cardHead + rows.length * inp.m.lineH + K.cardPad + (box.more ? K.cardFoot : 0) + 2;
+  box.w = Math.ceil(Math.min(K.maxCardW, Math.max(pill, gutter + Math.min(maxLen, 110) * inp.m.ch + 2 * K.cardPad + 8 + (box.more ? 8 : 0))));
+  box.h = K.cardHead + box.view * inp.m.lineH + K.cardPad + (box.foot ? K.cardFoot : 0) + 2;
 }
 
 /** Split many or very tall children into side-by-side columns of similar height. */

@@ -2,7 +2,7 @@
   "name": "codebloom",
   "displayName": "Codebloom — Code Mind Maps",
   "description": "See any file as a pastel mind map of its classes and functions, with real code on every branch and call arrows between them. Python, Java and JavaScript built in; TypeScript, Go, Rust, C# and more through your language extensions.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "rohan-patnaik",
   "author": {
     "name": "Rohan Patnaik",
@@ -58,6 +58,12 @@
         "icon": "$(type-hierarchy-sub)"
       },
       {
+        "command": "codebloom.openMapInTab",
+        "title": "Open Mind Map in New Tab",
+        "category": "Codebloom",
+        "icon": "$(link-external)"
+      },
+      {
         "command": "codebloom.openMapForFile",
         "title": "Open in Codebloom Mind Map",
         "category": "Codebloom"
@@ -96,6 +102,11 @@
           "command": "codebloom.openMapForFile",
           "when": "resourceLangId in codebloom.languages",
           "group": "navigation@90"
+        },
+        {
+          "command": "codebloom.openMapInTab",
+          "when": "resourceLangId in codebloom.languages",
+          "group": "navigation@91"
         }
       ],
       "editor/context": [
@@ -190,7 +201,7 @@
           "default": 24,
           "minimum": 4,
           "maximum": 400,
-          "description": "Longest code shown on a card before it is cut off. The full block is always in the editor and the details panel."
+          "description": "Lines a code card shows at once. Longer blocks scroll inside the selected card; scroll past the end to move on to the next block."
         },
         "codebloom.indexWorkspace": {
           "type": "boolean",

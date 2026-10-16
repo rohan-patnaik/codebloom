@@ -530,6 +530,7 @@ function relayout(how: 'fit' | 'keep' | Anchor) {
       label,
       badges,
       maxCardLines: S.maxCardLines,
+      foot: (b) => b.id === S.selected,
       m: M,
     },
     PASTELS.length,
@@ -595,7 +596,7 @@ function nodeHtml(box: Box): string {
   if (inCount(l)) head += `<span class="badge in" title="${inTitle(l!)}">←${inCount(l)}</span>`;
   if (l?.out.length) head += `<span class="badge out" title="Calls ${uniq(l.out).length}">→${uniq(l.out).length}</span>`;
   let html = `<div class="head">${head}</div>`;
-  if (box.card && box.rows) html += codeHtml(box.rows, b.end, box.more);
+  if (box.card && box.rows) html += codeHtml(box) + (box.foot ? `<div class="more">${footText(box)}</div>` : '');
   if (box.kidCount) {
     html += `<button class="knob" title="${box.collapsed ? 'Expand' : 'Collapse'} (${box.kidCount})" aria-label="Toggle children">${box.collapsed ? `+${box.kidCount}` : '−'}</button>`;
   }
@@ -610,16 +611,152 @@ function inTitle(l: Links) {
   return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
-function codeHtml(rows: Row[], last: number, more?: number) {
+function codeHtml(box: Box) {
   const h = hl();
-  const gw = String(last).length;
-  let s = `<div class="code" style="--gw:${gw}ch">`;
-  for (const r of rows) {
+  const gw = String(box.b!.end).length;
+  const scroll = box.rows!.length > box.view!;
+  let s = `<div class="code${scroll ? ' scroll' : ''}" style="--gw:${gw}ch;height:${box.view! * M.lineH + K.cardPad}px">`;
+  for (const r of box.rows!) {
     if (typeof r === 'number') s += `<div class="ln" data-line="${r}"><i>${r}</i><span>${h[r - 1] ?? ''}</span></div>`;
     else s += `<div class="ln gap"><i>⋯</i><span>${r.gap} lines in child blocks</span></div>`;
   }
-  if (more) s += `<div class="more">+${more} more lines · open in editor</div>`;
+  if (box.cut) s += `<div class="ln gap"><i>⋯</i><span>${box.cut} more lines · open in editor</span></div>`;
   return s + '</div>';
+}
+
+// ------------------------------------------------------------------ reading through cards
+//
+// The selected card scrolls through its code. Scrolling on past its end (or
+// start) moves the selection to the next (or previous) block in file order,
+// so a file can be read top to bottom while its arrows follow along.
+
+/** Blocks in the order they appear in the file. */
+function readingOrder(): ViewBlock[] {
+  const out: ViewBlock[] = [];
+  const walk = (bs: ViewBlock[]) => {
+    for (const b of [...bs].sort((a, c) => a.start - c.start)) {
+      out.push(b);
+      walk(b.children);
+    }
+  };
+  walk(S.model?.blocks ?? []);
+  return out;
+}
+
+function neighbour(id: string, dir: 1 | -1): ViewBlock | undefined {
+  const order = readingOrder();
+  const i = order.findIndex((b) => b.id === id);
+  return i < 0 ? undefined : order[i + dir];
+}
+
+/** Distance to keep scrolling past an edge before moving on: about two mouse-wheel notches. */
+const OVERSCROLL = 180;
+/** Gap between wheel events that starts a new gesture; trackpad momentum stays within one. */
+const GESTURE_GAP = 220;
+/** Pause after which a half-finished overscroll is forgotten. */
+const OVERSCROLL_RESET = 1200;
+const RS = {
+  last: 0,
+  gesture: 0,
+  /** The card scrolled during this gesture, so what's left of it is momentum. */
+  scrolled: false,
+  /** Gesture already moved to another block. */
+  used: -1,
+  acc: 0,
+  dir: 0 as 0 | 1 | -1,
+};
+/** Scroll position of each card, so re-rendering doesn't lose your place. */
+const scrollTops = new Map<string, number>();
+
+function atEdge(code: HTMLElement, dir: 1 | -1) {
+  return dir > 0 ? code.scrollTop + code.clientHeight >= code.scrollHeight - 1 : code.scrollTop <= 0;
+}
+
+function footText(box: Box, progress?: { dir: 1 | -1; f: number }): string {
+  const b = box.b!;
+  const code = rendered.get(box.id)?.querySelector<HTMLElement>('.code');
+  const selected = box.id === S.selected;
+  if (selected && progress) {
+    const n = neighbour(b.id, progress.dir);
+    if (n) {
+      return `<span class="next" style="--f:${progress.f}">${progress.dir > 0 ? '↓' : '↑'} Keep scrolling for <b>${esc(label(n))}</b></span>`;
+    }
+  }
+  const below = code ? Math.round((code.scrollHeight - code.scrollTop - code.clientHeight) / M.lineH) : (box.more ?? 0);
+  if (below > 0) return selected ? `↓ ${plural(below, 'more line')} · scroll` : `+${plural(below, 'more line')} · select to scroll`;
+  if (selected) {
+    const n = neighbour(b.id, 1);
+    return n ? `↓ Scroll on for <b>${esc(label(n))}</b>` : 'End of file';
+  }
+  return '';
+}
+
+function paintFoot(id: string, progress?: { dir: 1 | -1; f: number }) {
+  const box = S.lay?.boxes.get(id);
+  const foot = rendered.get(id)?.querySelector<HTMLElement>('.more');
+  if (box && foot) foot.innerHTML = footText(box, progress);
+}
+
+/** Handles a wheel event over the selected card. Returns true if the card took it. */
+function cardWheel(e: WheelEvent): boolean {
+  if (e.ctrlKey || e.metaKey || !S.selected || S.view !== 'map') return false;
+  const node = (e.target as HTMLElement).closest<HTMLElement>('.node.card');
+  if (!node || node.dataset.id !== S.selected) return false;
+  const code = node.querySelector<HTMLElement>('.code');
+  if (!code) return false;
+  const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * code.clientHeight : e.deltaY;
+  // Mostly sideways: leave it to the map.
+  if (Math.abs(e.deltaX) > Math.abs(dy)) return false;
+  e.preventDefault();
+  e.stopPropagation();
+  const now = performance.now();
+  const dir: 1 | -1 = dy > 0 ? 1 : -1;
+  if (dir !== RS.dir || now - RS.last > OVERSCROLL_RESET) RS.acc = 0;
+  if (dir !== RS.dir || now - RS.last > GESTURE_GAP) {
+    RS.gesture++;
+    RS.scrolled = false;
+  }
+  RS.dir = dir;
+  RS.last = now;
+  if (RS.used === RS.gesture || dy === 0) return true;
+  if (!atEdge(code, dir)) {
+    code.scrollTop += dy;
+    RS.scrolled = true;
+    RS.acc = 0;
+    return true;
+  }
+  // At the edge. Momentum from scrolling the card itself doesn't count.
+  const next = neighbour(S.selected, dir);
+  if (RS.scrolled || !next) return true;
+  RS.acc += Math.abs(dy);
+  if (RS.acc < OVERSCROLL) {
+    paintFoot(S.selected, { dir, f: RS.acc / OVERSCROLL });
+    clearTimeout(footTimer);
+    footTimer = window.setTimeout(() => S.selected && paintFoot(S.selected), OVERSCROLL_RESET);
+    return true;
+  }
+  RS.acc = 0;
+  RS.used = RS.gesture;
+  readOn(next, dir);
+  return true;
+}
+let footTimer = 0;
+
+/** Move the selection to `next`, keeping its card where the old one was so reading carries on in place. */
+function readOn(next: ViewBlock, dir: 1 | -1) {
+  const old = S.selected ? S.lay?.boxes.get(S.selected) : undefined;
+  const sx = old ? S.x + old.x * S.k : undefined;
+  const sy = old ? S.y + old.y * S.k : undefined;
+  // Going up starts the previous block at its end.
+  scrollTops.set(next.id, dir > 0 ? 0 : Number.MAX_SAFE_INTEGER);
+  select(next.id, { reveal: true, keepView: true });
+  const box = S.lay?.boxes.get(next.id);
+  if (!box || sx === undefined || sy === undefined) return;
+  const r = stage.getBoundingClientRect();
+  const m = 24;
+  const tx = Math.min(Math.max(sx, m), Math.max(m, r.width - m - box.w * S.k));
+  const ty = Math.min(Math.max(sy, m), Math.max(m, r.height - m - box.h * S.k));
+  animateTo(tx - box.x * S.k, ty - box.y * S.k, S.k, 320);
 }
 
 function makeNode(box: Box): HTMLElement {
@@ -627,6 +764,12 @@ function makeNode(box: Box): HTMLElement {
   e.dataset.id = box.id;
   e.style.cssText = `${hueVars(box.hue)};left:${box.x}px;top:${box.y}px;width:${box.w}px;${box.card ? `height:${box.h}px;` : ''}${box.b ? '' : `height:${box.h}px;`}`;
   e.innerHTML = nodeHtml(box);
+  const top = scrollTops.get(box.id);
+  const code = top ? e.querySelector<HTMLElement>('.code.scroll') : null;
+  if (code) requestAnimationFrame(() => {
+    code.scrollTop = top!;
+    paintFoot(box.id);
+  });
   return e;
 }
 
@@ -765,7 +908,8 @@ function reveal(rel: string, line: number, endLine?: number, focus = false, uri?
 }
 
 /** `history` marks a deliberate jump (click, search, following a call) that Back should return to. */
-function select(id: string | undefined, opts: { reveal?: boolean; center?: boolean; fromCursor?: boolean; history?: boolean } = {}) {
+/** `keepView` leaves the camera to the caller. */
+function select(id: string | undefined, opts: { reveal?: boolean; center?: boolean; fromCursor?: boolean; history?: boolean; keepView?: boolean } = {}) {
   const prev = S.selected;
   S.selected = id;
   const b = id ? S.byId.get(id) : undefined;
@@ -781,14 +925,14 @@ function select(id: string | undefined, opts: { reveal?: boolean; center?: boole
     if (S.collapsed.delete(p.id)) expanded = true;
   }
   if (b && opts.reveal) reveal(S.model!.rel, b.defLine, b.end);
-  const needsLayout = S.mode === 'names' || expanded;
   if (S.view === 'outline') {
     renderDetails();
     renderOutline();
     save();
     return;
   }
-  if (needsLayout && prev !== id) {
+  // The selected block gets its own card (names mode) or card footer (code mode), so a new selection re-lays out.
+  if (prev !== id) {
     const box = id ? S.lay?.boxes.get(id) : prev ? S.lay?.boxes.get(prev) : undefined;
     if (box && !expanded) relayout(anchorOf(box));
     else relayout('keep');
@@ -797,7 +941,7 @@ function select(id: string | undefined, opts: { reveal?: boolean; center?: boole
     paintState();
     renderDetails();
   }
-  if (id) ensureVisible(id);
+  if (id && !opts.keepView) ensureVisible(id);
   save();
 }
 
@@ -1182,6 +1326,7 @@ stage.addEventListener('pointerup', () => {
 stage.addEventListener(
   'wheel',
   (e) => {
+    if (cardWheel(e)) return;
     e.preventDefault();
     anim++;
     const r = stage.getBoundingClientRect();
@@ -1200,6 +1345,18 @@ stage.addEventListener(
     }
   },
   { passive: false },
+);
+
+nodesEl.addEventListener(
+  'scroll',
+  (e) => {
+    const code = e.target as HTMLElement;
+    const id = code.closest<HTMLElement>('.node')?.dataset.id;
+    if (!id || !code.classList?.contains('code')) return;
+    scrollTops.set(id, code.scrollTop);
+    paintFoot(id);
+  },
+  true,
 );
 
 nodesEl.addEventListener('click', (e) => {
@@ -1221,8 +1378,13 @@ nodesEl.addEventListener('click', (e) => {
     return;
   }
   if (t.closest('.more') && id === S.selected) {
-    const b = S.byId.get(id);
-    if (b) reveal(S.model!.rel, b.defLine, b.end, true);
+    const code = n.querySelector<HTMLElement>('.code');
+    const next = neighbour(id, 1);
+    if (next && (!code || atEdge(code, 1))) readOn(next, 1);
+    else {
+      const b = S.byId.get(id);
+      if (b) reveal(S.model!.rel, b.defLine, b.end, true);
+    }
     return;
   }
   select(id, { reveal: true, history: true });
