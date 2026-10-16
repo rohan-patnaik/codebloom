@@ -14,7 +14,7 @@
   <li><b>Copy as context</b> puts a block, its calls and its callers on the clipboard for an AI chat.</li>
   <li>Follows your editor and caret, matches your theme, runs fully locally with no telemetry.</li>
 </ul>
-<p>Open it from the <b>Codebloom</b> tool window on the right, or <b>Open Codebloom Map</b> in the editor's context menu.</p>
+<p>Open it from the <b>Codebloom</b> tool window on the right, or <b>Open Codebloom Map</b> in the editor's context menu. <b>Open Codebloom Map in Editor Tab</b> opens the map as an editor tab instead, like any other file, so it can be split, dragged or given the whole editor.</p>
 ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
@@ -27,6 +27,9 @@
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow id="Codebloom" anchor="right" secondary="false" icon="/icons/codebloom.svg"
                     factoryClass="io.github.rohanpatnaik.codebloom.CodebloomToolWindowFactory"/>
+        <fileEditorProvider implementation="io.github.rohanpatnaik.codebloom.MapEditorProvider"/>
+        <editorTabTitleProvider implementation="io.github.rohanpatnaik.codebloom.MapTabTitleProvider"/>
+        <fileIconProvider implementation="io.github.rohanpatnaik.codebloom.MapFileIconProvider"/>
         <!-- Development self-test; does nothing unless -Dcodebloom.selfTest is set. -->
         <postStartupActivity implementation="io.github.rohanpatnaik.codebloom.SelfTestActivity"/>
     </extensions>
@@ -39,6 +42,14 @@
             <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
             <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt shift M"/>
             <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="meta alt shift M" replace-all="true"/>
+        </action>
+        <action id="Codebloom.OpenMapInTab" class="io.github.rohanpatnaik.codebloom.OpenMapInTabAction"
+                text="Open Codebloom Map in Editor Tab"
+                description="Show this file's mind map in an editor tab, with the whole editor area"
+                icon="/icons/codebloom.svg">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+            <add-to-group group-id="EditorTabPopupMenu" anchor="last"/>
         </action>
         <action id="Codebloom.CopyContext" class="io.github.rohanpatnaik.codebloom.CopyContextAction"
                 text="Copy Block as LLM Context"
