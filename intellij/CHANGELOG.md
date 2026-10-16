@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.0
+
+- The selected block's card scrolls through all of its code. Scroll past its end to move on to the next block in the file, or past its top to go back; the arrows and details panel follow along.
+
 ## 0.2.0
 
 - Align the JetBrains plugin version with VS Code and Open VSX. Both editor packages now take their version from the root `package.json` and ship through the same release workflow.

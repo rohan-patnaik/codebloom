@@ -43,6 +43,14 @@ export function activate(ctx: vscode.ExtensionContext) {
       }
       MapPanel.show(ctx, service, uri);
     }),
+    vscode.commands.registerCommand('codebloom.openMapInTab', async (arg?: unknown) => {
+      const uri = targetUri(arg);
+      if (uri) {
+        const doc = await vscode.workspace.openTextDocument(uri);
+        if (!service.isSupported(doc)) return explain(doc);
+      }
+      MapPanel.show(ctx, service, uri, 'tab');
+    }),
     vscode.commands.registerCommand('codebloom.openMapForFile', async (uri?: vscode.Uri) => {
       const target = targetUri(uri);
       if (target) {

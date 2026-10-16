@@ -728,6 +728,43 @@ main {
   color: var(--fg);
 }
 
+.code.scroll {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--c, var(--lavender)) 45%, transparent) transparent;
+}
+
+.code.scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.code.scroll::-webkit-scrollbar-thumb {
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--c, var(--lavender)) 40%, transparent);
+}
+
+.card > .more {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-radius: 0 0 11px 11px;
+}
+
+.more b {
+  color: var(--ci, var(--fg));
+  font-weight: 600;
+}
+
+/* Fills from left to right while you keep scrolling past the end of a card. */
+.more .next {
+  display: block;
+  margin: 0 -12px;
+  padding: 0 12px;
+  color: var(--fg);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--c, var(--lavender)) 30%, transparent) calc(var(--f) * 100%), transparent 0);
+}
+
 .t-k {
   color: var(--t-k);
 }

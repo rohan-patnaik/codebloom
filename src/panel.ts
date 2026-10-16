@@ -46,11 +46,14 @@ export class MapPanel implements vscode.Disposable {
   private postTimer?: NodeJS.Timeout;
   private maximized = false;
 
-  static show(ctx: vscode.ExtensionContext, service: MapService, uri: vscode.Uri | undefined) {
+  /** `location` overrides the `codebloom.openLocation` setting: "tab" opens (or moves) the map into the active editor group. */
+  static show(ctx: vscode.ExtensionContext, service: MapService, uri: vscode.Uri | undefined, location?: 'beside' | 'tab') {
+    const inTab = (location ?? vscode.workspace.getConfiguration('codebloom').get<string>('openLocation', 'beside')) === 'tab';
     if (MapPanel.current) {
-      MapPanel.current.panel.reveal(undefined, true);
+      // Join the code's editor group (ViewColumn.Active doesn't move an existing webview).
+      if (location === 'tab') MapPanel.current.panel.reveal(vscode.window.activeTextEditor?.viewColumn ?? MapPanel.current.lastColumn, false);
+      else MapPanel.current.panel.reveal(undefined, true);
     } else {
-      const inTab = vscode.workspace.getConfiguration('codebloom').get<string>('openLocation', 'beside') === 'tab';
       const panel = vscode.window.createWebviewPanel(
         MapPanel.viewType,
         'Codebloom',
@@ -204,8 +207,8 @@ export class MapPanel implements vscode.Disposable {
         const same = uri.toString() === this.uri?.toString();
         const cfg = vscode.workspace.getConfiguration('codebloom');
         if (!m.focus && !cfg.get<boolean>('revealOnClick', true) && same) return;
-        // When the map is a tab in the editor's own group, only an explicit "go to code" may cover it.
-        const sharesGroup = vscode.workspace.getConfiguration('codebloom').get<string>('openLocation', 'beside') === 'tab' && !m.focus;
+        // When the map is a tab in the code's own editor group, only an explicit "go to code" may cover it.
+        const sharesGroup = !m.focus && this.panel.viewColumn === this.lastColumn;
         if (!sharesGroup) {
           const start = new vscode.Position(Math.max(0, m.line - 1), 0);
           const end = m.endLine ? new vscode.Position(m.endLine - 1, 0) : start;

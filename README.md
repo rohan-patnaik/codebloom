@@ -33,13 +33,14 @@ Codebloom is inspired by [epy (Extended Python)](https://github.com/phoenix2610/
 | | |
 |---|---|
 | **Names and Code modes** | Names mode shows labels and opens only the selected block as code. Code mode shows every block as a code card. |
+| **Read through a file** | The selected card scrolls through all of its code. Keep scrolling past its end to move to the next block in the file (or past its top to go back), with the arrows and details following along. |
 | **Call arrows** | Select a block to see what it calls (blue) and what calls it (peach). |
 | **Callbacks count** | Functions passed as values (`graph.add_node("plan", plan_node)`, `addEventListener("click", this.onClick)`, `{ handler }`) show as **Passed as a value** with a dotted arrow, so registered handlers don't look unused. Decorators such as `@app.route` are shown too. |
 | **Back and forward** | Follow calls from block to block and file to file, then step back with <kbd>Alt</kbd>+<kbd>←</kbd>. A trail above the map shows where you've been. |
 | **Cross-file links** | Resolves imports, `self`/`this`, inheritance, simple local typing (`x = Foo()`, `Foo x = new Foo()`), Java packages, static imports and overloads, JS `require`, default exports and `Foo.prototype.bar = function` patterns. |
 | **Editor sync** | Clicking a block scrolls the editor to it. Moving the cursor in the editor highlights its block in the map. |
 | **Details panel** | Shows the signature, docs, decorators, calls, callers and unlinked calls, plus **Copy as context** to paste a block and its call graph into an LLM chat. On narrow editors it floats over the map. |
-| **Full-width map** | The expand button in the header (or **Codebloom: Toggle Full-Width Map**) gives the map the whole editor area and back. |
+| **Full-width map** | **Codebloom: Open Mind Map in New Tab** opens the map as its own editor tab, like any other file (or set `codebloom.openLocation` to `tab`). The expand button in the header (or **Codebloom: Toggle Full-Width Map**) gives the map the whole editor area and back. |
 | **Outline view** | The same structure as an indented list. |
 | **Search** | Press <kbd>/</kbd> to jump to any block by name, with fuzzy matching. |
 | **Folding** | Fold any class or function. **Expand all** and **Collapse all** work on the whole file. |
@@ -96,7 +97,7 @@ Drag the background to pan. Use the mouse wheel or a pinch to zoom; two-finger s
 | `codebloom.preferLanguageServer` | `false` | Map Python, Java and JavaScript from their language extensions too, for their call accuracy instead of the built-in parsers' speed. |
 | `codebloom.openLocation` | `beside` | Open the map `beside` your code or as a full-width `tab`. |
 | `codebloom.defaultMode` | `names` | Start in `names` or `code` mode. |
-| `codebloom.maxCardLines` | `24` | Longest code shown on a card before it is cut off. |
+| `codebloom.maxCardLines` | `24` | Lines a card shows at once; longer code scrolls inside the card. |
 | `codebloom.followActiveEditor` | `true` | Switch the map when you switch files. |
 | `codebloom.syncCursor` | `true` | Highlight the block under the cursor. |
 | `codebloom.revealOnClick` | `true` | Clicking a block scrolls the editor to it. |

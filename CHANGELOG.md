@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0
+
+- **Read through a file on the map.** The selected block's card now scrolls through all of its code instead of stopping at `codebloom.maxCardLines`. Scroll past the end (about two more wheel notches) to move on to the next block in the file; scroll past the top to go back to the previous one, opened at its end. The arrows, details panel and editor follow along. Trackpad momentum never skips a block, and the card's footer shows what comes next.
+- **Codebloom: Open Mind Map in New Tab** opens the map as a full editor tab, like any other file (also in the Explorer's right-click menu). The `codebloom.openLocation` setting still picks the default.
+- When the map shares an editor group with your code, clicking a block no longer covers the map with the editor, however the map got there. Use Go to code or <kbd>Enter</kbd> to jump.
+
 ## 0.2.0
 
 - Maps any language VS Code has a language extension for. Python, Java and JavaScript keep their built-in parsers; TypeScript, CSS, SCSS, Less, HTML and Markdown work out of the box; Go, Rust, C#, C++ and others use the outline and call hierarchy of your installed extension. The package size is unchanged.

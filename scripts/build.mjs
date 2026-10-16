@@ -21,6 +21,7 @@ const configs = [
 if (!production) {
   configs.push({ ...common, sourcemap: false, entryPoints: ['src/core/index.ts'], outfile: 'dist-test/core.js', platform: 'node', format: 'cjs', target: 'node18', alias });
   configs.push({ ...common, sourcemap: false, entryPoints: ['src/webview/highlight.ts'], outfile: 'dist-test/highlight.js', platform: 'node', format: 'cjs', target: 'node18' });
+  configs.push({ ...common, sourcemap: false, entryPoints: ['src/webview/layout.ts'], outfile: 'dist-test/layout.js', platform: 'node', format: 'cjs', target: 'node18' });
 }
 
 if (watch) {
