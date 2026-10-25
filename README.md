@@ -33,7 +33,7 @@ Codebloom is inspired by [epy (Extended Python)](https://github.com/phoenix2610/
 | | |
 |---|---|
 | **Names and Code modes** | Names mode shows labels and opens only the selected block as code. Code mode shows every block as a code card. |
-| **Read through a file** | The selected card scrolls through all of its code. Keep scrolling past its end to move to the next block in the file (or past its top to go back), with the arrows and details following along. |
+| **Read through a file** | Scroll onto a card to select it; it then scrolls through all of its code. Pause at its end, then keep scrolling to move to the next block in the file (or past its top to go back), with the arrows and details following along. |
 | **Call arrows** | Select a block to see what it calls (blue) and what calls it (peach). |
 | **Callbacks count** | Functions passed as values (`graph.add_node("plan", plan_node)`, `addEventListener("click", this.onClick)`, `{ handler }`) show as **Passed as a value** with a dotted arrow, so registered handlers don't look unused. Decorators such as `@app.route` are shown too. |
 | **Back and forward** | Follow calls from block to block and file to file, then step back with <kbd>Alt</kbd>+<kbd>←</kbd>. A trail above the map shows where you've been. |
@@ -78,7 +78,7 @@ Only languages in `codebloom.languages` are mapped. **Codebloom: Choose Language
 | <kbd>Esc</kbd> | Deselect |
 | <kbd>?</kbd> | Show the shortcut list |
 
-Drag the background to pan. Use the mouse wheel or a pinch to zoom; two-finger scrolling on a trackpad pans.
+Drag the background to pan. Use the mouse wheel or a pinch to zoom; two-finger scrolling on a trackpad pans. Starting a scroll over a card selects it instead, so you can read it; <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+wheel always zooms.
 
 ## Commands
 
