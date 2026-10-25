@@ -38,7 +38,7 @@ if (store === 'vscode') {
 if (exists) {
   report(`${store}: ${version} is already present; no upload needed.`);
 } else {
-  if (!token) throw new Error(`${store}: missing publishing credential. Configure the matching GitHub Actions secret.`);
+  if (store !== 'open-vsx' && !token) throw new Error(`${store}: missing publishing credential. Configure the matching GitHub Actions secret.`);
   if (store === 'jetbrains') {
     const file = join(directory, `codebloom-intellij-${version}.zip`);
     const form = new FormData();
@@ -52,8 +52,8 @@ if (exists) {
     const file = join(directory, `codebloom-${version}.vsix`);
     const command = store === 'vscode'
       ? ['--no-install', 'vsce', 'publish', '--packagePath', file]
-      : ['--yes', 'ovsx@1.2.0', 'publish', file];
-    const credential = store === 'vscode' ? { VSCE_PAT: token } : { OVSX_PAT: token };
+      : ['--yes', 'ovsx@1.2.0', 'publish', file, '--trusted-publishing'];
+    const credential = store === 'vscode' ? { VSCE_PAT: token } : {};
     const result = spawnSync('npx', command, {
       stdio: 'inherit', env: { ...process.env, ...credential },
     });

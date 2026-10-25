@@ -122,8 +122,9 @@ Both editor packages use the version in the root `package.json`. Bump it once wi
 One-time setup in [GitHub Actions secrets](https://github.com/rohan-patnaik/codebloom/settings/secrets/actions):
 
 - `VSCE_PAT`: Azure DevOps token with **Marketplace → Manage** for the `rohan-patnaik` publisher.
-- `OVSX_PAT`: Open VSX publishing token for `rohan-patnaik`.
 - `JETBRAINS_MARKETPLACE_TOKEN`: JetBrains Marketplace permanent token with access to Codebloom.
+
+Open VSX uses [trusted publishing](https://github.com/eclipse-openvsx/openvsx/wiki/Trusted-Publishing), with no stored publishing token. After [namespace ownership is approved](https://github.com/EclipseFdn/open-vsx.org/issues/14232), register `rohan-patnaik.codebloom` under **Settings → Trusted Publishers** with GitHub owner `rohan-patnaik`, repository `codebloom`, workflow filename `release.yml`, and environment `open-vsx`. The publishing job requests a short-lived OIDC credential. Namespace contributors cannot create this registration; ownership is required.
 
 The **Build and release all marketplaces** workflow also supports **Run workflow** on `main` to catch up a missing store. Versions already present are skipped; missing credentials and rejected uploads fail visibly. Download both packages from the workflow's build artifact. JetBrains submissions still require review, so the same version may become public later there. Shared features use the same webview; IDE-specific integration is tested separately.
 
