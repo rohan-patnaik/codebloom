@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.1
+
+- **Scrolling onto a card selects it**, so the next scroll reads its code instead of zooming the map. A zoom or pan that is already under way carries on across cards; <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+wheel and pinch always zoom.
+- When trackpad momentum reaches the end of a card, its footer now says **Pause, then scroll on for …**, since one gesture never moves on after scrolling the card.
+
 ## 0.4.0
 
 - No changes to the VS Code extension; the version moves with the JetBrains plugin.

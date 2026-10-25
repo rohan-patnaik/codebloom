@@ -672,18 +672,24 @@ function atEdge(code: HTMLElement, dir: 1 | -1) {
   return dir > 0 ? code.scrollTop + code.clientHeight >= code.scrollHeight - 1 : code.scrollTop <= 0;
 }
 
-function footText(box: Box, progress?: { dir: 1 | -1; f: number }): string {
+/** `wait`: the card just finished scrolling, so this gesture won't move on and the reader has to pause first. */
+type Progress = { dir: 1 | -1; f: number; wait?: boolean };
+
+function footText(box: Box, progress?: Progress): string {
   const b = box.b!;
   const code = rendered.get(box.id)?.querySelector<HTMLElement>('.code');
   const selected = box.id === S.selected;
   if (selected && progress) {
     const n = neighbour(b.id, progress.dir);
+    if (n && progress.wait) {
+      return `${progress.dir > 0 ? '↓' : '↑'} Pause, then scroll on for <b>${esc(label(n))}</b>`;
+    }
     if (n) {
       return `<span class="next" style="--f:${progress.f}">${progress.dir > 0 ? '↓' : '↑'} Keep scrolling for <b>${esc(label(n))}</b></span>`;
     }
   }
   const below = code ? Math.round((code.scrollHeight - code.scrollTop - code.clientHeight) / M.lineH) : (box.more ?? 0);
-  if (below > 0) return selected ? `↓ ${plural(below, 'more line')} · scroll` : `+${plural(below, 'more line')} · select to scroll`;
+  if (below > 0) return selected ? `↓ ${plural(below, 'more line')} · scroll` : `+${plural(below, 'more line')} · scroll to read`;
   if (selected) {
     const n = neighbour(b.id, 1);
     return n ? `↓ Scroll on for <b>${esc(label(n))}</b>` : 'End of file';
@@ -691,25 +697,47 @@ function footText(box: Box, progress?: { dir: 1 | -1; f: number }): string {
   return '';
 }
 
-function paintFoot(id: string, progress?: { dir: 1 | -1; f: number }) {
+function paintFoot(id: string, progress?: Progress) {
   const box = S.lay?.boxes.get(id);
   const foot = rendered.get(id)?.querySelector<HTMLElement>('.more');
   if (box && foot) foot.innerHTML = footText(box, progress);
 }
 
-/** Handles a wheel event over the selected card. Returns true if the card took it. */
+/** Handles a wheel event over a card. Returns true if the card took it. */
 function cardWheel(e: WheelEvent): boolean {
-  if (e.ctrlKey || e.metaKey || !S.selected || S.view !== 'map') return false;
+  const now = performance.now();
+  const fresh = now - lastWheel > GESTURE_GAP;
+  lastWheel = now;
+  // A gesture that started on the map (zooming or panning) keeps going even when it crosses a card.
+  if (!fresh && mapGesture) return false;
+  const took = takeWheel(e, now, fresh);
+  mapGesture = !took;
+  return took;
+}
+
+function takeWheel(e: WheelEvent, now: number, fresh: boolean): boolean {
+  if (e.ctrlKey || e.metaKey || S.view !== 'map') return false;
   const node = (e.target as HTMLElement).closest<HTMLElement>('.node.card');
-  if (!node || node.dataset.id !== S.selected) return false;
-  const code = node.querySelector<HTMLElement>('.code');
-  if (!code) return false;
+  const code = node?.querySelector<HTMLElement>('.code');
+  if (!node || !code) return false;
+  if (node.dataset.id !== S.selected) {
+    if (!fresh) return false;
+    // Scrolling onto a card selects it, so the next gesture reads it instead of zooming the map.
+    e.preventDefault();
+    e.stopPropagation();
+    RS.gesture++;
+    RS.used = RS.gesture;
+    RS.dir = e.deltaY > 0 ? 1 : -1;
+    RS.last = now;
+    select(node.dataset.id, { reveal: true, keepView: true });
+    return true;
+  }
+  const id = S.selected!;
   const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * code.clientHeight : e.deltaY;
   // Mostly sideways: leave it to the map.
   if (Math.abs(e.deltaX) > Math.abs(dy)) return false;
   e.preventDefault();
   e.stopPropagation();
-  const now = performance.now();
   const dir: 1 | -1 = dy > 0 ? 1 : -1;
   if (dir !== RS.dir || now - RS.last > OVERSCROLL_RESET) RS.acc = 0;
   if (dir !== RS.dir || now - RS.last > GESTURE_GAP) {
@@ -726,11 +754,11 @@ function cardWheel(e: WheelEvent): boolean {
     return true;
   }
   // At the edge. Momentum from scrolling the card itself doesn't count.
-  const next = neighbour(S.selected, dir);
-  if (RS.scrolled || !next) return true;
-  RS.acc += Math.abs(dy);
-  if (RS.acc < OVERSCROLL) {
-    paintFoot(S.selected, { dir, f: RS.acc / OVERSCROLL });
+  const next = neighbour(id, dir);
+  if (!next) return true;
+  if (!RS.scrolled) RS.acc += Math.abs(dy);
+  if (RS.scrolled || RS.acc < OVERSCROLL) {
+    paintFoot(id, { dir, f: RS.acc / OVERSCROLL, wait: RS.scrolled });
     clearTimeout(footTimer);
     footTimer = window.setTimeout(() => S.selected && paintFoot(S.selected), OVERSCROLL_RESET);
     return true;
@@ -741,6 +769,8 @@ function cardWheel(e: WheelEvent): boolean {
   return true;
 }
 let footTimer = 0;
+let lastWheel = 0;
+let mapGesture = false;
 
 /** Move the selection to `next`, keeping its card where the old one was so reading carries on in place. */
 function readOn(next: ViewBlock, dir: 1 | -1) {

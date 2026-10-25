@@ -2,7 +2,7 @@
   "name": "codebloom",
   "displayName": "Codebloom — Code Mind Maps",
   "description": "See any file as a pastel mind map of its classes and functions, with real code on every branch and call arrows between them. Python, Java and JavaScript built in; TypeScript, Go, Rust, C# and more through your language extensions.",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "publisher": "rohan-patnaik",
   "author": {
     "name": "Rohan Patnaik",
