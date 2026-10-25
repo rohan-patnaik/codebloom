@@ -703,12 +703,19 @@ function paintFoot(id: string, progress?: Progress) {
   if (box && foot) foot.innerHTML = footText(box, progress);
 }
 
-/** Handles a wheel event over the selected card. Returns true if the card took it. */
+/** Handles a wheel event over a card. Returns true if the card took it. */
 function cardWheel(e: WheelEvent): boolean {
   const now = performance.now();
-  // A wheel gesture that started elsewhere (zooming or panning the map) keeps going even when it crosses a card.
   const fresh = now - lastWheel > GESTURE_GAP;
   lastWheel = now;
+  // A gesture that started on the map (zooming or panning) keeps going even when it crosses a card.
+  if (!fresh && mapGesture) return false;
+  const took = takeWheel(e, now, fresh);
+  mapGesture = !took;
+  return took;
+}
+
+function takeWheel(e: WheelEvent, now: number, fresh: boolean): boolean {
   if (e.ctrlKey || e.metaKey || S.view !== 'map') return false;
   const node = (e.target as HTMLElement).closest<HTMLElement>('.node.card');
   const code = node?.querySelector<HTMLElement>('.code');
@@ -763,6 +770,7 @@ function cardWheel(e: WheelEvent): boolean {
 }
 let footTimer = 0;
 let lastWheel = 0;
+let mapGesture = false;
 
 /** Move the selection to `next`, keeping its card where the old one was so reading carries on in place. */
 function readOn(next: ViewBlock, dir: 1 | -1) {
